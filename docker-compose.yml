@@ -1,6 +1,7 @@
 services:
   flight-tracker:
     build: .
+    image: ghcr.io/jozifsoriano/wedding-flight-tracker:${TAG:-dev}
     container_name: wedding-flight-tracker
     restart: unless-stopped
     ports:
