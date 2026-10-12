@@ -16,9 +16,11 @@ cabins:
 # Every combination of these dates is searched. Each extra date multiplies the
 # number of searches, so keep the lists short (2-3 options max per list).
 dates:
-  outbound: ["2027-02-26", "2027-02-28"]   # leave DFW
-  honeymoon_start: ["2027-03-08"]          # leave Da Nang for the honeymoon
-  honeymoon_end: ["2027-03-14"]            # leave the honeymoon spot
+  outbound: ["2027-03-05", "2027-03-06"]   # leave DFW
+  honeymoon_start: ["2027-03-15", "2027-03-16"]  # leave Da Nang for the honeymoon
+  # Leave the honeymoon spot. Open-jaw / multi-city plans fly home to DFW this
+  # day (3/19); round-trip plans fly back to Da Nang and home a day later (3/20).
+  honeymoon_end: ["2027-03-19"]
   # Long-haul flights from DFW land in SGN ~1-2 calendar days later; the
   # SGN->DAD hop is searched this many days after the outbound date.
   connector_offset_days: 2
