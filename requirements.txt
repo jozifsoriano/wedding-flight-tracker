@@ -5,4 +5,5 @@ apscheduler==3.11.0
 pyyaml==6.0.2
 httpx==0.28.1
 fast-flights==2.2
+primp==2.0.0  # fast-flights 2.2 uses impersonate="chrome_126", which primp 2.0.1 removed
 typing_extensions>=4.12
