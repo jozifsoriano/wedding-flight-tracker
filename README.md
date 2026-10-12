@@ -35,6 +35,14 @@ docker compose --profile with-mongo up -d --build   # and set MONGO_URI=mongodb:
 
 Data goes in the `wedding_flights` database, in the collections `quotes`, `plan_history` and `runs`.
 
+### Deployment
+
+GitHub Actions builds and publishes the image to GHCR. Every push to `main` publishes `ghcr.io/jozifsoriano/wedding-flight-tracker:latest`, and every `v*` tag (e.g. `v1.2.0`) publishes a versioned image (`:1.2.0`). To run a published image instead of building locally, set `TAG` and pull:
+
+```bash
+TAG=latest docker compose pull flight-tracker && TAG=latest docker compose up -d
+```
+
 ## Configuration (`config.yaml`)
 
 - **`dates`**: `outbound` (leave DFW), `honeymoon_start`, `honeymoon_end`. Every combination is searched, so keep each list to 1–3 dates.
