@@ -1,0 +1,25 @@
+services:
+  flight-tracker:
+    build: .
+    container_name: wedding-flight-tracker
+    restart: unless-stopped
+    ports:
+      - "8085:8000"
+    env_file: .env
+    environment:
+      TZ: America/Chicago
+    volumes:
+      - ./config.yaml:/config/config.yaml   # edit on the host, then "Reload config.yaml" in the UI
+
+  # Only needed if you DON'T already have Mongo. Start with:
+  #   docker compose --profile with-mongo up -d
+  # and set MONGO_URI=mongodb://mongo:27017 in .env
+  mongo:
+    image: mongo:7
+    profiles: ["with-mongo"]
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:

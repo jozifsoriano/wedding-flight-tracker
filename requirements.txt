@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pymongo==4.10.1
+apscheduler==3.11.0
+pyyaml==6.0.2
+httpx==0.28.1
+fast-flights==2.2
+typing_extensions>=4.12

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wedding Flights</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+<link rel="stylesheet" href="/static/style.css?v=2">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <h1>Wedding Flights</h1>
+      <p id="trip-summary" class="muted">Loading…</p>
+    </div>
+    <div class="run">
+      <span id="run-status" class="muted small"></span>
+      <button id="run-btn" class="btn">Refresh prices</button>
+    </div>
+  </div>
+  <nav class="wrap tabs" role="tablist">
+    <button role="tab" data-tab="best" aria-selected="true">Best trips</button>
+    <button role="tab" data-tab="plans">All plans</button>
+    <button role="tab" data-tab="history">Price history</button>
+    <button role="tab" data-tab="ideas">Honeymoon ideas</button>
+    <button role="tab" data-tab="searches">Searches</button>
+  </nav>
+</header>
+
+<main class="wrap">
+  <section id="tab-best" class="tab">
+    <div id="hero" class="hero"></div>
+    <div id="best-grid" class="grid"></div>
+  </section>
+
+  <section id="tab-plans" class="tab" hidden>
+    <div class="filters">
+      <label>Destination <select id="f-dest"><option value="">All</option></select></label>
+      <label>Plan <select id="f-type"><option value="">All</option></select></label>
+      <label>Gateway <select id="f-gw"><option value="">All</option></select></label>
+      <label class="check"><input type="checkbox" id="f-complete" checked> Fully priced only</label>
+    </div>
+    <div class="table-wrap"><table id="plans-table" class="data"></table></div>
+  </section>
+
+  <section id="tab-history" class="tab" hidden>
+    <div class="filters">
+      <label>Destination <select id="h-dest"></select></label>
+    </div>
+    <div class="panel">
+      <h2 id="h-title" class="chart-title"></h2>
+      <p class="muted small">Cheapest full trip for 2 per plan type, at each refresh.</p>
+      <div class="chart-box"><canvas id="h-chart"></canvas></div>
+      <p id="h-empty" class="muted" hidden>No history yet — it fills in after each refresh.</p>
+    </div>
+  </section>
+
+  <section id="tab-ideas" class="tab" hidden>
+    <p class="muted intro">Prices are the cheapest full trip for both of you (business long-haul + economy regional), including the honeymoon flights.</p>
+    <div id="ideas-grid" class="grid ideas"></div>
+  </section>
+
+  <section id="tab-searches" class="tab" hidden>
+    <div id="status-panel" class="panel"></div>
+    <div class="table-wrap"><table id="searches-table" class="data"></table></div>
+  </section>
+</main>
+
+<footer class="wrap muted small">
+  Prices are Google Flights totals for all travelers, in your currency, and change constantly — always confirm on the airline/OTA before booking.
+</footer>
+<script src="/static/app.js?v=2"></script>
+</body>
+</html>

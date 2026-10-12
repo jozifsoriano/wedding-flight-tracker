@@ -1,0 +1,133 @@
+# Wedding flight tracker config. Edit this file, then restart the container
+# (or hit "Reload config" in the web UI's Status tab).
+
+party:
+  adults: 2
+currency: USD
+
+home: DFW            # where you fly from / back to
+wedding_city: DAD    # Da Nang — every plan ends up here for the wedding
+gateways: [DAD, SGN] # long-haul arrival airports to compare (SGN = fly in + hop to DAD)
+
+cabins:
+  long_haul: business   # DFW <-> Vietnam / honeymoon spot <-> DFW
+  regional: economy     # SGN <-> DAD hop and Da Nang <-> honeymoon flights
+
+# Every combination of these dates is searched. Each extra date multiplies the
+# number of searches, so keep the lists short (2-3 options max per list).
+dates:
+  outbound: ["2027-02-26", "2027-02-28"]   # leave DFW
+  honeymoon_start: ["2027-03-08"]          # leave Da Nang for the honeymoon
+  honeymoon_end: ["2027-03-14"]            # leave the honeymoon spot
+  # Long-haul flights from DFW land in SGN ~1-2 calendar days later; the
+  # SGN->DAD hop is searched this many days after the outbound date.
+  connector_offset_days: 2
+  # "Round trip + side trip" plans fly back to Da Nang on honeymoon_end and
+  # then home this many days later.
+  home_after_return_days: 1
+
+schedule:
+  interval_hours: 12          # how often to refresh every search
+  request_delay_seconds: 8    # pause between Google requests (be polite, avoid blocks)
+  run_on_startup: true
+
+providers:
+  # "google" = free Google Flights scrape (fast-flights). No key needed.
+  # "serpapi" = paid Google Flights API, more reliable, needs SERPAPI_KEY env var.
+  default: google
+  # True multi-city tickets (DFW->DAD + Tokyo->DFW on ONE business ticket) can
+  # only be priced through SerpApi. Searched only when SERPAPI_KEY is set.
+  multicity: serpapi
+  serpapi_monthly_budget: 240  # stop calling SerpApi after this many searches / month
+
+alerts:
+  # Send a push when a destination's best total trip price hits a new low.
+  ntfy_url: ""          # e.g. https://ntfy.sh/our-wedding-flights-xyz  or your self-hosted ntfy
+  discord_webhook: ""   # optional
+  min_drop_pct: 3       # ignore drops smaller than this
+  target_total: 0       # also alert whenever any full trip (for 2) is below this; 0 = off
+
+# Honeymoon ideas. `airports` are what gets priced. `fly_home_from` (optional)
+# is the hub you'd catch the business flight home from in "open jaw" plans;
+# the hop from the honeymoon airport to that hub is priced in economy.
+# `fly_out_via` (optional) prices the honeymoon flights from a hub instead of
+# Da Nang, plus economy hops Da Nang <-> hub.
+# Notes are general guidance — double-check visa / entry rules before booking.
+honeymoon:
+  - id: tokyo
+    name: Tokyo
+    country: Japan
+    airports: [HND]
+    from_dad: "Direct DAD–Tokyo flights run on some days (~5h); otherwise via SGN/HAN."
+    march: "Cool (8–15°C). Plum blossoms early March; cherry blossoms usually start late March."
+    vibe: "Food, city energy, ryokan + onsen day trip to Hakone."
+    entry: "Visa-free for US passports for short tourist stays."
+    tip: "Best open-jaw option: AA and JAL fly Tokyo–DFW nonstop in business, so you can fly home straight from the honeymoon."
+  - id: osaka
+    name: Osaka / Kyoto
+    country: Japan
+    airports: [KIX]
+    from_dad: "~4.5–5h, often direct on Vietjet / Vietnam Airlines, else via SGN/HAN."
+    march: "Cool (8–15°C), mostly dry. Early sakura possible near the end of March."
+    vibe: "Temples and gardens in Kyoto, street food in Osaka, private onsen ryokan."
+    entry: "Visa-free for US passports for short tourist stays."
+    tip: "Pairs well with flying home via Tokyo or Seoul in business."
+  - id: phu-quoc
+    name: Phu Quoc
+    country: Vietnam
+    airports: [PQC]
+    fly_home_from: SGN   # no business fares to DFW from the island airport itself
+    from_dad: "~1h45 nonstop on Vietjet / Vietnam Airlines."
+    march: "Dry season — sunny, calm seas, ~30°C. One of the best months."
+    vibe: "Low-effort beach resort honeymoon; sunset town, island hopping in the south."
+    entry: "Domestic flight from DAD — no extra visa, no Vietnam re-entry needed."
+    tip: "Cheapest and simplest option; keeps you in-country so a single-entry e-visa works."
+  - id: phuket
+    name: Phuket / Krabi
+    country: Thailand
+    airports: [HKT]
+    from_dad: "Usually 1 stop via BKK or SGN (~4–5h total)."
+    march: "Andaman dry season — hot (32°C+), sunny, calm water."
+    vibe: "Phang Nga Bay and Phi Phi day trips, big resort selection at every budget."
+    entry: "Visa-exempt entry for US passports (check current allowed length of stay)."
+    tip: "Look at Krabi (KBV) too — quieter, often similar pricing."
+  - id: koh-samui
+    name: Koh Samui
+    country: Thailand
+    airports: [USM]
+    fly_home_from: BKK   # no business fares to DFW from the island airport itself
+    from_dad: "Via BKK on Bangkok Airways (Samui airport is mostly Bangkok Airways)."
+    march: "Gulf side is in its dry season — great beach weather."
+    vibe: "Boutique villas, Ang Thong marine park, more relaxed than Phuket."
+    entry: "Visa-exempt entry for US passports (check current allowed length of stay)."
+    tip: "Pricier flights, but a very honeymoon-y island."
+  - id: boracay
+    name: Boracay
+    country: Philippines
+    airports: [MPH]
+    fly_home_from: MNL   # no business fares to DFW from the island airport itself
+    from_dad: "Via MNL (or SGN→MNL), then a short hop to Caticlan (MPH) + 15 min boat."
+    march: "Peak dry season; White Beach is calm, Bulabog side windy (kite surfing)."
+    vibe: "Powder-white sand, sunset sailing (paraw), lively at night."
+    entry: "Visa-free for US passports for 30 days; fill out the eTravel form before arrival."
+    tip: "Kalibo (KLO) is a cheaper but 1.5h-farther alternate airport."
+  - id: palawan
+    name: Palawan (El Nido / Coron)
+    country: Philippines
+    airports: [PPS]
+    fly_home_from: MNL   # no business fares to DFW from the island airport itself
+    from_dad: "Via MNL to Puerto Princesa (PPS); El Nido is ~5h by van, or fly MNL→ENI direct."
+    march: "Dry season — calm seas, ideal for island-hopping tours."
+    vibe: "Lagoons, limestone cliffs, snorkeling; more adventurous than Boracay."
+    entry: "Visa-free for US passports for 30 days; fill out the eTravel form before arrival."
+    tip: "If budget allows, flying into El Nido (ENI) or Coron (USU) saves a long transfer."
+  - id: maldives
+    name: Maldives
+    country: Maldives
+    airports: [MLE]
+    fly_out_via: SGN   # Google can't price DAD->MLE as one ticket; SGN->MLE prices fine
+    from_dad: "No through tickets from DAD — priced as DAD→SGN + SGN→Malé (also reachable via BKK, KUL or SIN)."
+    march: "Peak dry season — calm, sunny, great visibility for snorkeling."
+    vibe: "Overwater villa, the classic honeymoon. Most expensive option by far."
+    entry: "Free 30-day visa on arrival with a resort booking; submit IMUGA form within 96h of travel."
+    tip: "Seaplane/speedboat transfers to resorts add $500–1,500+ per couple — not in these prices."
