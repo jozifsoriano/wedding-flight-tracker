@@ -71,3 +71,12 @@ After editing, click **Searches → Reload config.yaml** in the UI. Schedule cha
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 MONGO_URI=mongodb://localhost:27017 CONFIG_PATH=./config.yaml .venv/bin/uvicorn app.main:app --reload --port 8085
 ```
+
+## Running tests
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+The tests are hermetic: MongoDB is replaced with `mongomock`, and Google Flights (fast-flights), SerpApi and the ntfy/Discord alerts are all faked, so you don't need a network connection, a database or any API keys.
