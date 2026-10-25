@@ -95,6 +95,15 @@ def overview():
     last_run = db.runs.find_one(sort=[("started_at", -1)])
     job = scheduler.get_job("refresh")
     best_dest = sorted(best_by(plans, "destination_id").values(), key=lambda p: p["total"])
+    dashboard_trips = list(best_dest)
+    priced_destinations = {plan["destination_id"] for plan in best_dest}
+    for destination in cfg.honeymoon:
+        if destination.id in priced_destinations:
+            continue
+        placeholder = next((plan for plan in plans if plan["destination_id"] == destination.id), None)
+        if placeholder:
+            dashboard_trips.append(placeholder)
+    dashboard_trips.sort(key=lambda p: (p["total"] is None, p["total"] or 0))
     return {
         "trip": {
             "home": cfg.home, "wedding_city": cfg.wedding_city, "gateways": cfg.gateways,
@@ -104,6 +113,7 @@ def overview():
         "destinations": [d.model_dump() for d in cfg.honeymoon],
         "plan_types": PLAN_TYPES,
         "best_by_destination": best_dest,
+        "dashboard_trips": dashboard_trips,
         "best_by_destination_type": list(best_by(plans, "destination_id", "type").values()),
         "plans": plans,
         "status": {

@@ -32,10 +32,26 @@ def test_overview_with_no_data(client, cfg):
     assert body["trip"]["home"] == "DFW" and body["trip"]["adults"] == 2
     assert [d["id"] for d in body["destinations"]] == ["tokyo"]
     assert body["best_by_destination"] == []
+    assert [p["destination_id"] for p in body["dashboard_trips"]] == ["tokyo"]
     assert all(p["total"] is None for p in body["plans"])
     assert body["status"]["search_count"] == len(build_searches(cfg))
     assert body["status"]["last_run"] is None
     assert body["status"]["serpapi_enabled"] is False
+
+
+def test_unpriced_destinations_appear_on_best_trips_dashboard(client, monkeypatch):
+    cfg = make_cfg(honeymoon=[
+        {"id": "seoul", "name": "Seoul", "country": "South Korea", "airports": ["ICN"],
+         "start_dates": ["2027-03-15"], "end_dates": ["2027-03-19"], "extended_stay": True},
+        {"id": "saigon", "name": "Saigon", "country": "Vietnam", "airports": ["SGN"],
+         "start_dates": ["2027-03-15"], "end_dates": ["2027-03-19"], "extended_stay": True},
+    ])
+    monkeypatch.setattr(main, "cfg", cfg)
+
+    body = client.get("/api/overview").json()
+
+    assert [p["destination_id"] for p in body["dashboard_trips"]] == ["seoul", "saigon"]
+    assert all(p["total"] is None for p in body["dashboard_trips"])
 
 
 def test_overview_with_prices_and_run(client, cfg):
