@@ -93,6 +93,22 @@ def test_multicity_searches_only_with_serpapi_key(monkeypatch):
     assert mc[0].provider == "serpapi"
 
 
+def test_extended_stay_searches_only_outbound_hop_and_homebound_ticket(monkeypatch):
+    cfg = make_cfg(honeymoon=[{
+        "id": "seoul", "name": "Seoul", "country": "South Korea", "airports": ["ICN"],
+        "start_dates": ["2027-03-15"], "end_dates": ["2027-03-19"], "extended_stay": True,
+    }])
+    keys = {s.key for s in build_searches(cfg)}
+    assert "one-way|economy|DAD-ICN@2027-03-15" in keys
+    assert "one-way|business|ICN-DFW@2027-03-19" in keys
+    assert "round-trip|economy|DAD-ICN@2027-03-15,ICN-DAD@2027-03-19" not in keys
+    assert "one-way|economy|ICN-DAD@2027-03-19" not in keys
+
+    monkeypatch.setenv("SERPAPI_KEY", "test-key")
+    keys = {s.key for s in build_searches(cfg)}
+    assert "multi-city|business|DFW-DAD@2027-03-05,ICN-DFW@2027-03-19" in keys
+
+
 def test_every_date_combination_is_searched():
     cfg = make_cfg(dates={"outbound": ["2027-03-05", "2027-03-06"],
                           "honeymoon_start": ["2027-03-15", "2027-03-16"], "honeymoon_end": ["2027-03-19"]})

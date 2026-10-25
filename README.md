@@ -13,7 +13,9 @@ For each honeymoon destination, each gateway (`DAD` direct, or `SGN` + a cheap h
 | **Multi-city** *(SerpApi only)* | Same route as open jaw, but both business legs on one ticket. Often cheaper than two one-ways |
 | **Wedding only** | Baseline with no honeymoon, so you can see what the honeymoon adds |
 
-Default destinations: Tokyo, Osaka/Kyoto, Phu Quoc, Phuket, Koh Samui, Boracay, Palawan and the Maldives. The **Honeymoon ideas** tab covers March weather, how to get there from DAD and entry notes for each. Add or remove destinations in `config.yaml`.
+Default destinations: Tokyo, Osaka/Kyoto, Phu Quoc, Phuket, Koh Samui, Boracay, Palawan, the Maldives, Seoul and Saigon. Seoul and Saigon are tracked as extended stays leaving Da Nang on March 15 and flying home March 19. The **Honeymoon ideas** tab covers destination notes. Add destinations from the **Add a city** tab; GUI additions are persisted in `user-data/user_destinations.yaml` and use their own dates.
+
+For extended stays, the **All plans** tab compares separate DFW→wedding-city and destination→DFW tickets against those long-haul legs on one multi-city ticket. Both totals include the separately priced wedding-city→destination hop. Multi-city pricing requires `SERPAPI_KEY`; separate-ticket estimates are still tracked without it.
 
 All prices are **totals for both travelers** (that's what Google Flights returns when you search for 2 adults). The dashboard also shows the per-person price.
 
@@ -45,14 +47,14 @@ TAG=latest docker compose pull flight-tracker && TAG=latest docker compose up -d
 
 ## Configuration (`config.yaml`)
 
-- **`dates`**: `outbound` (leave DFW), `honeymoon_start`, `honeymoon_end`. Every combination is searched, so keep each list to 1–3 dates.
+- **`dates`**: `outbound` (leave DFW), `honeymoon_start`, `honeymoon_end`. Every combination is searched, so keep each list to 1–3 dates. Destination-specific `start_dates` and `end_dates` override the honeymoon dates for that city.
 - **`gateways`**: `[DAD, SGN]` compares flying into Da Nang against flying into Saigon and hopping up.
 - **`cabins`**: `long_haul: business`, `regional: economy`.
 - **`honeymoon[].fly_home_from`**: island airports such as PQC, MPH, PPS and USM have no business fares to DFW. For those, open-jaw plans add an economy hop to a hub (SGN/MNL/BKK) and fly business home from there.
 - **`honeymoon[].fly_out_via`**: Google can't price Da Nang→Malé as one ticket, so the Maldives is priced via SGN.
 - **`alerts`**: set `ntfy_url` and/or `discord_webhook` to get a push when a destination hits a new low (`min_drop_pct`), or when any full trip drops under `target_total`.
 
-After editing, click **Searches → Reload config.yaml** in the UI. Schedule changes take effect from the next run.
+After editing `config.yaml`, click **Searches → Reload config.yaml** in the UI. GUI-added destinations are saved separately and reloaded immediately. Schedule changes take effect from the next run.
 
 ## Data sources
 

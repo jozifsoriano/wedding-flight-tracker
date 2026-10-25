@@ -9,8 +9,10 @@ services:
     env_file: .env
     environment:
       TZ: America/Chicago
+      GUI_DESTINATIONS_PATH: /data/user_destinations.yaml
     volumes:
       - ./config.yaml:/config/config.yaml   # edit on the host, then "Reload config.yaml" in the UI
+      - ./user-data:/data
 
   # Only needed if you DON'T already have Mongo. Start with:
   #   docker compose --profile with-mongo up -d

@@ -64,10 +64,6 @@ def build_searches(cfg: Config) -> List[Search]:
     home, city = cfg.home, cfg.wedding_city
     lh, rg = cfg.cabins.long_haul, cfg.cabins.regional
     p = cfg.providers.default
-    # (airport, where honeymoon flights to it start: the wedding city or a fly_out_via hub)
-    honeymoon_routes = sorted({(a, dest.fly_out_via or city) for dest in cfg.honeymoon for a in dest.airports})
-    # (honeymoon airport, hub the business flight home leaves from)
-    home_routes = sorted({(a, dest.fly_home_from or a) for dest in cfg.honeymoon for a in dest.airports})
     out: List[Search] = []
 
     for out_day in d.outbound:
@@ -75,29 +71,45 @@ def build_searches(cfg: Config) -> List[Search]:
             out.append(one_way("longhaul_out", lh, p, home, g, out_day))
             if g != city:
                 out.append(one_way("connector", rg, p, g, city, shift(out_day, d.connector_offset_days)))
-            for he in d.honeymoon_end:
+            round_trip_ends = set(d.honeymoon_end)
+            round_trip_ends.update(
+                he for dest in cfg.honeymoon if not dest.extended_stay
+                for he in (dest.end_dates or d.honeymoon_end)
+            )
+            for he in sorted(round_trip_ends):
                 back = shift(he, d.home_after_return_days)
                 out.append(round_trip("longhaul_rt", lh, p, home, g, out_day, back))
                 if g != city:
                     out.append(one_way("connector", rg, p, city, g, back))
-                if cfg.serpapi_key:
-                    for _, hub in home_routes:
-                        out.append(Search("multicity", "multi-city", lh, (Leg(home, g, out_day), Leg(hub, home, he)),
-                                          cfg.providers.multicity))
 
-    for he in d.honeymoon_end:
-        for ap, hub in home_routes:
-            out.append(one_way("longhaul_home", lh, p, hub, home, he))
-            if hub != ap:
-                out.append(one_way("home_hop", rg, p, ap, hub, he))
-        for hs in d.honeymoon_start:
-            for ap, start in honeymoon_routes:
+    for dest in cfg.honeymoon:
+        start_dates = dest.start_dates or d.honeymoon_start
+        end_dates = dest.end_dates or d.honeymoon_end
+        for ap in dest.airports:
+            start = dest.fly_out_via or city
+            hub = dest.fly_home_from or ap
+            for hs in start_dates:
                 out.append(one_way("honeymoon_ow", rg, p, start, ap, hs))
-                out.append(round_trip("honeymoon_rt", rg, p, start, ap, hs, he))
-                out.append(one_way("honeymoon_back", rg, p, ap, start, he))
                 if start != city:
                     out.append(one_way("connector", rg, p, city, start, hs))
-                    out.append(one_way("connector", rg, p, start, city, he))
+                if not dest.extended_stay:
+                    for he in end_dates:
+                        out.append(round_trip("honeymoon_rt", rg, p, start, ap, hs, he))
+                        out.append(one_way("honeymoon_back", rg, p, ap, start, he))
+                        if start != city:
+                            out.append(one_way("connector", rg, p, start, city, he))
+            for he in end_dates:
+                out.append(one_way("longhaul_home", lh, p, hub, home, he))
+                if hub != ap:
+                    out.append(one_way("home_hop", rg, p, ap, hub, he))
+                if cfg.serpapi_key:
+                    for out_day in d.outbound:
+                        for g in cfg.gateways:
+                            out.append(Search(
+                                "multicity", "multi-city", lh,
+                                (Leg(home, g, out_day), Leg(hub, home, he)),
+                                cfg.providers.multicity,
+                            ))
 
     seen, unique = set(), []
     for s in out:

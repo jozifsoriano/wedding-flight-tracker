@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wedding Flights</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -25,6 +25,7 @@
     <button role="tab" data-tab="plans">All plans</button>
     <button role="tab" data-tab="history">Price history</button>
     <button role="tab" data-tab="ideas">Honeymoon ideas</button>
+    <button role="tab" data-tab="add-city">Add a city</button>
     <button role="tab" data-tab="searches">Searches</button>
   </nav>
 </header>
@@ -62,6 +63,28 @@
     <div id="ideas-grid" class="grid ideas"></div>
   </section>
 
+  <section id="tab-add-city" class="tab" hidden>
+    <div class="panel">
+      <h2>Add a city / flight plan</h2>
+      <p class="muted">Track a city after the wedding on its own dates. The dashboard prices the DAD hop and compares separate long-haul tickets with a multi-city ticket.</p>
+      <form id="add-city-form">
+        <div class="form-grid">
+          <label>City <input id="city-name" name="name" required maxlength="80" placeholder="Seoul"></label>
+          <label>Country <input id="city-country" name="country" required maxlength="80" placeholder="South Korea"></label>
+          <label>Airport code(s) <input id="city-airports" name="airports" required placeholder="ICN" aria-describedby="airport-help"></label>
+          <label>Leave wedding city <input id="city-start-date" name="start_date" type="date" required></label>
+          <label>Leave destination for home <input id="city-end-date" name="end_date" type="date" required></label>
+        </div>
+        <label class="form-check"><input id="city-extended" name="extended_stay" type="checkbox" checked> Extended stay (do not price a return hop to Da Nang)</label>
+        <div class="form-actions">
+          <button id="add-city-btn" class="btn" type="submit">Add city</button>
+          <span id="add-city-msg" class="muted small" role="status"></span>
+        </div>
+        <p id="airport-help" class="muted small">Use airport codes separated by commas. Multi-city fares require SerpApi; without it, separate-ticket estimates and tracking still work.</p>
+      </form>
+    </div>
+  </section>
+
   <section id="tab-searches" class="tab" hidden>
     <div id="status-panel" class="panel"></div>
     <div class="table-wrap"><table id="searches-table" class="data"></table></div>
@@ -71,6 +94,6 @@
 <footer class="wrap muted small">
   Prices are Google Flights totals for all travelers, in your currency, and change constantly — always confirm on the airline/OTA before booking.
 </footer>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>
