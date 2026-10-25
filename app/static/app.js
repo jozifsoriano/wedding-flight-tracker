@@ -81,6 +81,7 @@ function sparkline(points) {
 
 // ---------- best trips ----------
 function renderBest() {
+  const trips = data.dashboard_trips;
   const best = data.best_by_destination;
   const top = best.find((p) => p.type !== "wedding");
   const wedding = best.find((p) => p.type === "wedding");
@@ -93,13 +94,13 @@ function renderBest() {
     ${comparisonNote(top) ? `<div class="meta">${esc(comparisonNote(top))}</div>` : ""}`
     : `<div><div class="label">No complete prices yet</div><p class="meta">The first refresh takes a few minutes (each search waits a bit to stay polite to Google). Check the Searches tab for progress.</p></div>`;
 
-  $("#best-grid").innerHTML = best.map((p) => `
+  $("#best-grid").innerHTML = trips.map((p) => `
     <article class="card">
       <div class="card-head">
-        <div><h3>${esc(p.destination)}</h3><div class="meta">${esc(p.type_label)} · via ${esc(p.gateway)}${p.airport ? " · " + esc(p.airport) : ""}</div></div>
-        <div style="text-align:right"><div class="price">${money(p.total)}</div><div class="meta">${money(p.per_person)} pp</div></div>
+        <div><h3>${esc(p.destination)}</h3><div class="meta">${p.total == null ? "Tracking · awaiting prices" : `${esc(p.type_label)} · via ${esc(p.gateway)}${p.airport ? " · " + esc(p.airport) : ""}`}</div></div>
+        <div style="text-align:right"><div class="price">${money(p.total)}</div><div class="meta">${p.total == null ? "estimate pending" : `${money(p.per_person)} pp`}</div></div>
       </div>
-      <div class="meta">${planDates(p)}</div>
+      ${p.total != null ? `<div class="meta">${planDates(p)}</div>` : ""}
       ${comparisonNote(p) ? `<div class="meta">${esc(comparisonNote(p))}</div>` : ""}
       ${sparkline(sparks[p.destination_id])}
       ${legsList(p)}
