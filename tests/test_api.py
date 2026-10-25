@@ -1,4 +1,5 @@
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from app import db, main, tracker
@@ -138,3 +139,34 @@ def test_reload_invalid_config_keeps_old_one(client, monkeypatch, cfg, tmp_path)
     assert r.status_code == 400
     assert r.json()["detail"].startswith("config.yaml is invalid")
     assert main.cfg is cfg
+
+
+def test_add_destination_persists_itinerary_dates_and_reloads_config(client, monkeypatch, cfg, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg.model_dump(), sort_keys=False))
+    monkeypatch.setattr(main, "CONFIG_PATH", config_path)
+
+    response = client.post("/api/destinations", json={
+        "name": "Seoul", "country": "South Korea", "airports": ["icn"],
+        "start_date": "2027-03-15", "end_date": "2027-03-19", "extended_stay": True,
+    })
+
+    assert response.status_code == 201
+    assert response.json()["destination"]["id"] == "seoul"
+    assert response.json()["searches"] > 0
+    assert main.cfg.honeymoon[-1].model_dump()["start_dates"] == ["2027-03-15"]
+    assert main.cfg.honeymoon[-1].extended_stay is True
+    assert (tmp_path / "user-data" / "user_destinations.yaml").exists()
+
+
+def test_add_destination_rejects_invalid_dates_and_duplicates(client, monkeypatch, cfg, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(yaml.safe_dump(cfg.model_dump(), sort_keys=False))
+    monkeypatch.setattr(main, "CONFIG_PATH", config_path)
+    payload = {
+        "name": "Tokyo", "country": "Japan", "airports": ["HND"],
+        "start_date": "2027-03-19", "end_date": "2027-03-15",
+    }
+    assert client.post("/api/destinations", json=payload).status_code == 422
+    payload.update(name="Tokyo", start_date="2027-03-15", end_date="2027-03-19")
+    assert client.post("/api/destinations", json=payload).status_code == 409

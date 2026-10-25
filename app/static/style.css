@@ -119,6 +119,14 @@ footer { padding-bottom: 32px; }
 
 .filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
 .filters label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text-2); }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 16px 0; }
+.form-grid label { display: grid; gap: 5px; color: var(--text-2); font-size: 13px; }
+.form-grid input {
+  width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+}
+.form-check { display: flex; gap: 8px; align-items: center; color: var(--text-2); font-size: 13px; }
+.form-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 select {
   font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; padding: 6px 8px; max-width: 100%;

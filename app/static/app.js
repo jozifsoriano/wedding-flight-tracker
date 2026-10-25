@@ -48,6 +48,24 @@ function planDates(p) {
   return `Leave ${fmtDate(d.outbound)} · honeymoon ${fmtDate(d.honeymoon_start)}–${fmtDate(d.honeymoon_end)}` + (d.home ? ` · home ${fmtDate(d.home)}` : "");
 }
 
+function comparisonNote(plan) {
+  if (!["open_jaw", "multicity"].includes(plan.type) ||
+      !data.destinations.find((d) => d.id === plan.destination_id)?.extended_stay) return "";
+  const sameItinerary = (p) => p.destination_id === plan.destination_id && p.gateway === plan.gateway &&
+    p.dates.outbound === plan.dates.outbound && p.dates.honeymoon_start === plan.dates.honeymoon_start &&
+    p.dates.honeymoon_end === plan.dates.honeymoon_end && p.airport === plan.airport;
+  const otherType = plan.type === "multicity" ? "open_jaw" : "multicity";
+  const other = data.plans.find((p) => p.type === otherType && sameItinerary(p));
+  if (!other) return plan.type === "open_jaw" && !data.status.serpapi_enabled
+    ? "Multi-city ticket comparison requires SerpApi; this total includes the separate DAD hop."
+    : "";
+  if (plan.total == null || other.total == null) return "Comparison needs prices for both ticket options.";
+  const delta = Math.abs(plan.total - other.total);
+  if (delta === 0) return "Multi-city and separate long-haul tickets are currently the same price.";
+  const cheaper = plan.type === "multicity" ? plan.total < other.total : other.total < plan.total;
+  return `${cheaper ? "Multi-city saves" : "Separate long-haul tickets save"} ${money(delta)}; both totals include the separate DAD hop.`;
+}
+
 function sparkline(points) {
   if (!points || points.length < 2) return `<p class="muted small">Trend appears after a few refreshes.</p>`;
   const w = 300, h = 40, pad = 5;
@@ -71,7 +89,8 @@ function renderBest() {
       <div class="meta">${money(top.per_person)} per person · for ${data.trip.adults}</div></div>
     <div><div class="label">Honeymoon</div><h2>${esc(top.destination)}</h2><div class="meta">${esc(top.type_label)} · via ${esc(top.gateway)}</div></div>
     ${wedding ? `<div><div class="label">Wedding flights alone</div><div class="price">${money(wedding.total)}</div>
-      <div class="meta">so the honeymoon adds ${money(top.total - wedding.total)}</div></div>` : ""}`
+    <div class="meta">so the honeymoon adds ${money(top.total - wedding.total)}</div></div>` : ""}
+    ${comparisonNote(top) ? `<div class="meta">${esc(comparisonNote(top))}</div>` : ""}`
     : `<div><div class="label">No complete prices yet</div><p class="meta">The first refresh takes a few minutes (each search waits a bit to stay polite to Google). Check the Searches tab for progress.</p></div>`;
 
   $("#best-grid").innerHTML = best.map((p) => `
@@ -81,6 +100,7 @@ function renderBest() {
         <div style="text-align:right"><div class="price">${money(p.total)}</div><div class="meta">${money(p.per_person)} pp</div></div>
       </div>
       <div class="meta">${planDates(p)}</div>
+      ${comparisonNote(p) ? `<div class="meta">${esc(comparisonNote(p))}</div>` : ""}
       ${sparkline(sparks[p.destination_id])}
       ${legsList(p)}
     </article>`).join("") || "";
@@ -104,7 +124,8 @@ function renderPlans() {
     <thead><tr><th>Destination</th><th>Plan</th><th>Gateway</th><th>Dates</th><th class="num">Total for ${data.trip.adults}</th><th class="num">Per person</th><th>Breakdown</th></tr></thead>
     <tbody>${rows.slice(0, 400).map((p) => `<tr>
       <td>${esc(p.destination)}${p.airport ? ` <span class="tag">${esc(p.airport)}</span>` : ""}</td>
-      <td>${esc(p.type_label)}</td><td>${esc(p.gateway)}</td><td>${planDates(p)}</td>
+      <td>${esc(p.type_label)}${comparisonNote(p) ? `<div class="muted small">${esc(comparisonNote(p))}</div>` : ""}</td>
+      <td>${esc(p.gateway)}</td><td>${planDates(p)}</td>
       <td class="num"><b>${money(p.total)}</b></td><td class="num">${money(p.per_person)}</td>
       <td><details><summary>${p.components.length} flights</summary>${legsList(p)}</details></td>
     </tr>`).join("") || `<tr><td colspan="7" class="muted">No plans match.</td></tr>`}</tbody>`;
@@ -182,6 +203,40 @@ function renderIdeas() {
   }).join("");
 }
 
+function renderAddCity() {
+  if (!$("#city-start-date").value) $("#city-start-date").value = data.trip.dates.honeymoon_start[0] || "";
+  if (!$("#city-end-date").value) $("#city-end-date").value = data.trip.dates.honeymoon_end[0] || "";
+}
+
+$("#add-city-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = $("#add-city-btn"), message = $("#add-city-msg");
+  button.disabled = true;
+  message.textContent = "Saving…";
+  const payload = {
+    name: $("#city-name").value,
+    country: $("#city-country").value,
+    airports: $("#city-airports").value.split(/[,\s]+/).filter(Boolean),
+    start_date: $("#city-start-date").value,
+    end_date: $("#city-end-date").value,
+    extended_stay: $("#city-extended").checked,
+  };
+  try {
+    const result = await api("/api/destinations", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    message.textContent = `Added — ${result.searches} searches will be tracked. Use Refresh prices for estimates now.`;
+    $("#city-name").value = "";
+    $("#city-country").value = "";
+    $("#city-airports").value = "";
+    await load();
+  } catch (e) {
+    message.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
 // ---------- searches / status ----------
 async function renderSearches() {
   const s = data.status;
@@ -234,6 +289,7 @@ async function load() {
   renderBest();
   renderPlans();
   renderIdeas();
+  renderAddCity();
   const active = document.querySelector('.tabs [aria-selected="true"]').dataset.tab;
   if (active === "searches") renderSearches();
   if (active === "history") renderHistory();

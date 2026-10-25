@@ -51,6 +51,9 @@ class Destination(BaseModel):
     name: str
     country: str
     airports: List[str]
+    start_dates: Optional[List[str]] = None
+    end_dates: Optional[List[str]] = None
+    extended_stay: bool = False
     fly_home_from: Optional[str] = None  # hub for the business flight home in open-jaw plans
     fly_out_via: Optional[str] = None    # price honeymoon flights from this hub (plus a hop from the wedding city)
     from_dad: str = ""
@@ -78,6 +81,17 @@ class Config(BaseModel):
         return os.environ.get("SERPAPI_KEY", "")
 
 
+def gui_destinations_path(config_path: Path = CONFIG_PATH) -> Path:
+    default_path = config_path.parent / "user-data" / "user_destinations.yaml"
+    return Path(os.environ.get("GUI_DESTINATIONS_PATH", default_path))
+
+
 def load_config(path: Path = CONFIG_PATH) -> Config:
     with open(path) as f:
-        return Config.model_validate(yaml.safe_load(f))
+        data = yaml.safe_load(f) or {}
+    gui_path = gui_destinations_path(path)
+    if gui_path.exists():
+        with gui_path.open() as f:
+            gui_destinations = yaml.safe_load(f) or []
+        data["honeymoon"] = [*(data.get("honeymoon") or []), *gui_destinations]
+    return Config.model_validate(data)

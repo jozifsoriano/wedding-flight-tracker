@@ -133,3 +133,27 @@ honeymoon:
     vibe: "Overwater villa, the classic honeymoon. Most expensive option by far."
     entry: "Free 30-day visa on arrival with a resort booking; submit IMUGA form within 96h of travel."
     tip: "Seaplane/speedboat transfers to resorts add $500–1,500+ per couple — not in these prices."
+  - id: seoul
+    name: Seoul
+    country: South Korea
+    airports: [ICN]
+    start_dates: ["2027-03-15"]
+    end_dates: ["2027-03-19"]
+    extended_stay: true
+    from_dad: "Fly from Da Nang to Seoul on 3/15; compare the hop separately from the long-haul ticket."
+    march: "Cool early spring; expect crisp weather and some late-winter chill."
+    vibe: "An extended city stay for food, neighborhoods, palaces, and shopping."
+    entry: "Check current South Korea entry and K-ETA requirements before booking."
+    tip: "Compares DFW→DAD + ICN→DFW on one multi-city business ticket against separate long-haul tickets, with DAD→ICN priced as its own hop."
+  - id: saigon
+    name: Saigon (Ho Chi Minh City)
+    country: Vietnam
+    airports: [SGN]
+    start_dates: ["2027-03-15"]
+    end_dates: ["2027-03-19"]
+    extended_stay: true
+    from_dad: "Direct domestic flights connect Da Nang and Saigon."
+    march: "Hot and dry season; expect warm, sunny weather."
+    vibe: "An extended city stay for food, markets, museums, and nightlife."
+    entry: "Staying in Vietnam avoids an international departure and re-entry."
+    tip: "Compares DFW→DAD + SGN→DFW on one multi-city business ticket against separate long-haul tickets, with DAD→SGN priced as its own hop."

@@ -15,6 +15,12 @@ def test_bundled_config_yaml_loads():
     assert len(ids) == len(set(ids)), "destination ids must be unique"
     for d in cfg.honeymoon:
         assert d.airports
+    for destination_id, airport in (("seoul", "ICN"), ("saigon", "SGN")):
+        dest = next(d for d in cfg.honeymoon if d.id == destination_id)
+        assert dest.airports == [airport]
+        assert dest.start_dates == ["2027-03-15"]
+        assert dest.end_dates == ["2027-03-19"]
+        assert dest.extended_stay is True
 
 
 def test_minimal_config_gets_defaults(tmp_path):

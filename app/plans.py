@@ -71,53 +71,70 @@ def compute_plans(cfg: Config, latest: Dict[str, dict]) -> List[dict]:
         return [component(one_way("connector", rg, p, g, city, shift(out_day, d.connector_offset_days)),
                           f"{g} → {city} hop")]
 
-    for out_day, g, hs, he in product(d.outbound, cfg.gateways, d.honeymoon_start, d.honeymoon_end):
-        back = shift(he, d.home_after_return_days)
-        rt = component(round_trip("longhaul_rt", lh, p, home, g, out_day, back), f"{home} ⇄ {g} round trip")
-        conn_back = [] if g == city else [
-            component(one_way("connector", rg, p, city, g, back), f"{city} → {g} hop")]
-        base_dates = {"outbound": out_day, "honeymoon_start": hs, "honeymoon_end": he}
-
-        add("wedding", None, g, {"outbound": out_day, "home": back},
-            [rt] + connector_in(g, out_day) + conn_back)
+    for out_day, g in product(d.outbound, cfg.gateways):
+        for he in d.honeymoon_end:
+            back = shift(he, d.home_after_return_days)
+            rt = component(round_trip("longhaul_rt", lh, p, home, g, out_day, back),
+                           f"{home} ⇄ {g} round trip")
+            conn_back = [] if g == city else [
+                component(one_way("connector", rg, p, city, g, back), f"{city} → {g} hop")]
+            add("wedding", None, g, {"outbound": out_day, "home": back},
+                [rt] + connector_in(g, out_day) + conn_back)
 
         for dest in cfg.honeymoon:
+            starts = dest.start_dates or d.honeymoon_start
+            ends = dest.end_dates or d.honeymoon_end
             for ap in dest.airports:
-                dates = {**base_dates, "airport": ap}
                 start = dest.fly_out_via or city
-                via_out = [] if start == city else [
-                    component(one_way("connector", rg, p, city, start, hs), f"{city} → {start} hop")]
-                via_back = [] if start == city else [
-                    component(one_way("connector", rg, p, start, city, he), f"{start} → {city} hop")]
-                to_honeymoon = component(one_way("honeymoon_ow", rg, p, start, ap, hs), f"{start} → {ap}")
-                side = _cheaper(
-                    [component(round_trip("honeymoon_rt", rg, p, start, ap, hs, he), f"{start} ⇄ {ap} honeymoon")],
-                    [to_honeymoon, component(one_way("honeymoon_back", rg, p, ap, start, he), f"{ap} → {start}")],
-                )
-                add("rt_side", dest, g, {**dates, "home": back},
-                    [rt] + connector_in(g, out_day) + via_out + side + via_back + conn_back)
-
                 hub = dest.fly_home_from or ap
-                hop = [] if hub == ap else [component(one_way("home_hop", rg, p, ap, hub, he), f"{ap} → {hub} hop")]
-                add("open_jaw", dest, g, dates, [
-                    component(one_way("longhaul_out", lh, p, home, g, out_day), f"{home} → {g}"),
-                    *connector_in(g, out_day),
-                    *via_out,
-                    to_honeymoon,
-                    *hop,
-                    component(one_way("longhaul_home", lh, p, hub, home, he), f"{hub} → {home}"),
-                ])
+                for hs, he in product(starts, ends):
+                    dates = {
+                        "outbound": out_day, "honeymoon_start": hs, "honeymoon_end": he, "airport": ap,
+                    }
+                    via_out = [] if start == city else [
+                        component(one_way("connector", rg, p, city, start, hs), f"{city} → {start} hop")]
+                    to_honeymoon = component(one_way("honeymoon_ow", rg, p, start, ap, hs),
+                                             f"{start} → {ap}")
 
-                if cfg.serpapi_key:
-                    mc = Search("multicity", "multi-city", lh, (Leg(home, g, out_day), Leg(hub, home, he)),
-                                cfg.providers.multicity)
-                    add("multicity", dest, g, dates, [
-                        component(mc, f"{home} → {g} + {hub} → {home} (one ticket)"),
+                    if not dest.extended_stay:
+                        back = shift(he, d.home_after_return_days)
+                        rt = component(round_trip("longhaul_rt", lh, p, home, g, out_day, back),
+                                       f"{home} ⇄ {g} round trip")
+                        conn_back = [] if g == city else [
+                            component(one_way("connector", rg, p, city, g, back), f"{city} → {g} hop")]
+                        via_back = [] if start == city else [
+                            component(one_way("connector", rg, p, start, city, he),
+                                      f"{start} → {city} hop")]
+                        side = _cheaper(
+                            [component(round_trip("honeymoon_rt", rg, p, start, ap, hs, he),
+                                       f"{start} ⇄ {ap} honeymoon")],
+                            [to_honeymoon, component(one_way("honeymoon_back", rg, p, ap, start, he),
+                                                     f"{ap} → {start}")],
+                        )
+                        add("rt_side", dest, g, {**dates, "home": back},
+                            [rt] + connector_in(g, out_day) + via_out + side + via_back + conn_back)
+
+                    hop = [] if hub == ap else [
+                        component(one_way("home_hop", rg, p, ap, hub, he), f"{ap} → {hub} hop")]
+                    add("open_jaw", dest, g, dates, [
+                        component(one_way("longhaul_out", lh, p, home, g, out_day), f"{home} → {g}"),
                         *connector_in(g, out_day),
                         *via_out,
                         to_honeymoon,
                         *hop,
+                        component(one_way("longhaul_home", lh, p, hub, home, he), f"{hub} → {home}"),
                     ])
+
+                    if cfg.serpapi_key:
+                        mc = Search("multicity", "multi-city", lh,
+                                    (Leg(home, g, out_day), Leg(hub, home, he)), cfg.providers.multicity)
+                        add("multicity", dest, g, dates, [
+                            component(mc, f"{home} → {g} + {hub} → {home} (one ticket)"),
+                            *connector_in(g, out_day),
+                            *via_out,
+                            to_honeymoon,
+                            *hop,
+                        ])
 
     plans.sort(key=lambda pl: (pl["total"] is None, pl["total"] or 0))
     return plans

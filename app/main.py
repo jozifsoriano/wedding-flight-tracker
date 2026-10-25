@@ -1,23 +1,28 @@
 import logging
+import os
+import re
+import tempfile
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from . import db, tracker
-from .config import load_config
+from .config import CONFIG_PATH, Config, gui_destinations_path, load_config
 from .plans import PLAN_TYPES, best_by, compute_plans
 from .searches import build_searches
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 STATIC = Path(__file__).parent / "static"
 
-cfg = load_config()
+cfg = load_config(CONFIG_PATH)
 scheduler = BackgroundScheduler(timezone="UTC")
 
 
@@ -45,6 +50,37 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 def _iso(d):
     return d.isoformat() if d else None
+
+
+class AddDestinationRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    country: str = Field(min_length=1, max_length=80)
+    airports: list[str] = Field(min_length=1)
+    start_date: date
+    end_date: date
+    extended_stay: bool = True
+
+    @field_validator("name", "country")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+    @field_validator("airports")
+    @classmethod
+    def normalize_airports(cls, airports: list[str]) -> list[str]:
+        normalized = list(dict.fromkeys(a.strip().upper() for a in airports))
+        if any(not re.fullmatch(r"[A-Z]{3}", airport) for airport in normalized):
+            raise ValueError("airport codes must be three letters")
+        return normalized
+
+    @model_validator(mode="after")
+    def dates_are_ordered(self):
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be after start_date")
+        return self
 
 
 @app.get("/")
@@ -130,6 +166,66 @@ def run_now():
         raise HTTPException(409, "A refresh is already running")
     threading.Thread(target=tracker.run_all, args=(cfg,), daemon=True).start()
     return {"started": True}
+
+
+@app.post("/api/destinations", status_code=201)
+def add_destination(request: AddDestinationRequest):
+    """Persist a destination added through the GUI and begin tracking its itinerary."""
+    global cfg
+    destination_id = re.sub(r"[^a-z0-9]+", "-", request.name.lower()).strip("-")
+    if not destination_id:
+        raise HTTPException(422, "City name must contain letters or numbers")
+    if any(d.id == destination_id for d in cfg.honeymoon):
+        raise HTTPException(409, f"{request.name} is already being tracked")
+
+    destination = {
+        "id": destination_id,
+        "name": request.name,
+        "country": request.country,
+        "airports": request.airports,
+        "start_dates": [request.start_date.isoformat()],
+        "end_dates": [request.end_date.isoformat()],
+        "extended_stay": request.extended_stay,
+    }
+    updated = [*cfg.honeymoon, destination]
+    try:
+        Config.model_validate({**cfg.model_dump(), "honeymoon": updated})
+    except ValidationError as e:
+        raise HTTPException(400, f"Destination is invalid: {e}") from e
+
+    path = gui_destinations_path(CONFIG_PATH)
+    temp_path = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as temp:
+            temp_path = Path(temp.name)
+            yaml.safe_dump(
+                [*(_read_gui_destinations(path)), destination],
+                temp,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+        os.replace(temp_path, path)
+    except OSError as e:
+        raise HTTPException(500, f"Could not save destination: {e}") from e
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink()
+
+    cfg = load_config(CONFIG_PATH)
+    return {"destination": destination, "searches": len(build_searches(cfg))}
+
+
+def _read_gui_destinations(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or []
+    if not isinstance(data, list):
+        raise HTTPException(500, "GUI destinations file must contain a YAML list")
+    return data
 
 
 @app.post("/api/reload")

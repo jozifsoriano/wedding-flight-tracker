@@ -1,5 +1,3 @@
-import pytest
-
 from app.config import load_config
 from app.plans import _cheaper, best_by, cheapest, compute_plans
 from app.searches import build_searches
@@ -101,6 +99,23 @@ def test_multicity_plan_with_serpapi_key(monkeypatch, cfg):
     assert mc["total"] == 200   # one multi-city ticket + DAD → HND
 
 
+def test_extended_stay_compares_multicity_with_separate_longhaul_tickets(monkeypatch):
+    monkeypatch.setenv("SERPAPI_KEY", "test-key")
+    cfg = make_cfg(honeymoon=[{
+        "id": "seoul", "name": "Seoul", "country": "South Korea", "airports": ["ICN"],
+        "start_dates": ["2027-03-15"], "end_dates": ["2027-03-19"], "extended_stay": True,
+    }])
+    plans = compute_plans(cfg, priced(build_searches(cfg)))
+    seoul = [p for p in plans if p["destination_id"] == "seoul"]
+    by_type = {p["type"]: p for p in seoul}
+    assert set(by_type) == {"open_jaw", "multicity"}
+    assert by_type["open_jaw"]["total"] == 300
+    assert by_type["multicity"]["total"] == 200
+    assert [c["role"] for c in by_type["multicity"]["components"]] == [
+        "DFW → DAD + ICN → DFW (one ticket)", "DAD → ICN",
+    ]
+
+
 def test_every_plan_component_is_a_searched_route(monkeypatch):
     """compute_plans must only reference keys that build_searches actually prices."""
     monkeypatch.setenv("SERPAPI_KEY", "test-key")
@@ -114,10 +129,6 @@ def test_every_plan_component_is_a_searched_route(monkeypatch):
             assert c["key"] in searched
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Bug: compute_plans adds the 'wedding' baseline inside the honeymoon_start x honeymoon_end loop, "
-    "but its id/contents only depend on outbound + home date, so with 2+ honeymoon dates the "
-    "'All plans' table gets identical duplicate wedding-only rows."))
 def test_plan_ids_are_unique():
     cfg = load_config(ROOT / "config.yaml")
     ids = [pl["id"] for pl in compute_plans(cfg, {})]
