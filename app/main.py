@@ -9,13 +9,13 @@ from pathlib import Path
 
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import Body, FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from . import actions, assistant, db, mcp, tracker
-from .config import CONFIG_PATH, Config, gui_destinations_path, load_config
+from . import actions, assistant, auth, db, mcp, tracker
+from .config import CONFIG_PATH, Config, gui_destinations_path, load_config, read_store
 from .plans import PLAN_TYPES, best_by, compute_plans
 from .searches import build_searches
 
@@ -46,6 +46,59 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Wedding Flight Tracker", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+# Reachable without a session cookie. /mcp has its own per-question bearer token; /healthz is for Docker.
+PUBLIC_PATHS = {"/healthz", "/mcp", "/api/auth/status", "/api/auth/login", "/api/auth/logout",
+                "/static/style.css", "/static/login.js"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    if (not auth.enabled() or request.url.path in PUBLIC_PATHS
+            or auth.valid_session(request.cookies.get(auth.COOKIE))):
+        return await call_next(request)
+    if request.url.path == "/":
+        return FileResponse(STATIC / "login.html")
+    return JSONResponse({"detail": "Login required"}, status_code=401)
+
+
+class LoginRequest(BaseModel):
+    password: str = Field(max_length=500)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    return {"enabled": auth.enabled(), "logged_in": auth.valid_session(request.cookies.get(auth.COOKIE))}
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest, request: Request):
+    if not auth.enabled():
+        raise HTTPException(404, "Login is not configured")
+    client = request.client.host if request.client else "unknown"
+    if auth.throttled(client):
+        raise HTTPException(429, "Too many failed attempts; try again in a few minutes")
+    if not auth.check_password(body.password):
+        auth.record_failure(client)
+        raise HTTPException(401, "Wrong password")
+    auth.clear_failures(client)
+    response = JSONResponse({"ok": True})
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(auth.COOKIE, auth.make_session(), max_age=auth.SESSION_TTL, httponly=True,
+                        samesite="strict", secure=secure, path="/")
+    return response
+
+
+@app.post("/api/auth/logout")
+def logout():
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(auth.COOKIE, path="/")
+    return response
 
 
 def _iso(d):
@@ -225,9 +278,12 @@ def _validate_honeymoon(destinations: list) -> None:
         raise HTTPException(400, f"Destination is invalid: {e}") from e
 
 
-def _write_gui_destinations(items: list[dict]) -> None:
+def _write_gui_destinations(items: list[dict], migrated: bool | None = None) -> None:
     global cfg
     path = gui_destinations_path(CONFIG_PATH)
+    if migrated is None:
+        migrated = _read_store()[1]
+    document = {"migrated": True, "destinations": items} if migrated else items
     temp_path = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +291,7 @@ def _write_gui_destinations(items: list[dict]) -> None:
             mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
         ) as temp:
             temp_path = Path(temp.name)
-            yaml.safe_dump(items, temp, sort_keys=False, allow_unicode=True)
+            yaml.safe_dump(document, temp, sort_keys=False, allow_unicode=True)
         os.replace(temp_path, path)
     except OSError as e:
         raise HTTPException(500, f"Could not save destination: {e}") from e
@@ -245,8 +301,15 @@ def _write_gui_destinations(items: list[dict]) -> None:
     cfg = load_config(CONFIG_PATH)
 
 
+def _read_store() -> tuple[list[dict], bool]:
+    try:
+        return read_store(gui_destinations_path(CONFIG_PATH))
+    except ValueError as e:
+        raise HTTPException(500, str(e)) from e
+
+
 def _gui_destinations() -> list[dict]:
-    return _read_gui_destinations(gui_destinations_path(CONFIG_PATH))
+    return _read_store()[0]
 
 
 def _add_destination(request: AddDestinationRequest) -> dict:
@@ -267,25 +330,32 @@ def _add_destination(request: AddDestinationRequest) -> dict:
     return {"destination": destination, "searches": len(build_searches(cfg))}
 
 
+NOT_MANAGED = ("'{id}' is not managed by the app yet. config.yaml destinations become editable after the user "
+               "clicks \"Move built-in destinations into the app\" on the Add a city tab.")
+
+
 def _update_destination(destination_id: str, changes: dict) -> dict:
     items = _gui_destinations()
     index = next((i for i, d in enumerate(items) if d["id"] == destination_id), None)
     if index is None:
-        raise HTTPException(404, f"'{destination_id}' is not a destination added through the app "
-                                 "(config.yaml destinations can only be edited in the file)")
+        raise HTTPException(404, NOT_MANAGED.format(id=destination_id))
     current = items[index]
-    try:
+    cur_start, cur_end = (current.get("start_dates") or [None])[0], (current.get("end_dates") or [None])[0]
+    start, end = changes.get("start_date", cur_start), changes.get("end_date", cur_end)
+    try:   # validate with the global dates standing in when a destination has none of its own
         merged = AddDestinationRequest(
             name=changes.get("name", current["name"]), country=changes.get("country", current["country"]),
             airports=changes.get("airports", current["airports"]),
-            start_date=changes.get("start_date", (current.get("start_dates") or [None])[0]),
-            end_date=changes.get("end_date", (current.get("end_dates") or [None])[0]),
-            extended_stay=changes.get("extended_stay", current.get("extended_stay", True)))
+            start_date=start or cfg.dates.honeymoon_start[0], end_date=end or cfg.dates.honeymoon_end[0],
+            extended_stay=changes.get("extended_stay", current.get("extended_stay", False)))
     except ValidationError as e:
         raise HTTPException(422, f"Update is invalid: {e}") from e
     updated = {**current, "name": merged.name, "country": merged.country, "airports": merged.airports,
-               "start_dates": [merged.start_date.isoformat()], "end_dates": [merged.end_date.isoformat()],
                "extended_stay": merged.extended_stay}
+    if start:
+        updated["start_dates"] = [merged.start_date.isoformat()]
+    if end:
+        updated["end_dates"] = [merged.end_date.isoformat()]
     others = [d for d in cfg.honeymoon if d.id != destination_id]
     _validate_honeymoon([*others, updated])
     items[index] = updated
@@ -296,9 +366,40 @@ def _update_destination(destination_id: str, changes: dict) -> dict:
 def _remove_destination(destination_id: str) -> dict:
     items = _gui_destinations()
     if not any(d["id"] == destination_id for d in items):
-        raise HTTPException(404, f"'{destination_id}' is not a destination added through the app")
+        raise HTTPException(404, NOT_MANAGED.format(id=destination_id))
     _write_gui_destinations([d for d in items if d["id"] != destination_id])
     return {"removed": destination_id, "searches": len(build_searches(cfg))}
+
+
+def _config_file_destinations() -> list[dict]:
+    with open(CONFIG_PATH) as f:
+        return list((yaml.safe_load(f) or {}).get("honeymoon") or [])
+
+
+def _migrate_config() -> dict:
+    """Copy config.yaml's honeymoon destinations (all fields) into the app store and make the store the source of truth.
+    config.yaml is not modified; its honeymoon list is simply ignored afterwards. Idempotent."""
+    items, migrated = _read_store()
+    if migrated:
+        return {"migrated": 0, "already": True, "destinations": len(cfg.honeymoon)}
+    have = {d["id"] for d in items}
+    moved = [d for d in _config_file_destinations() if d.get("id") not in have]
+    _validate_honeymoon([*moved, *items])
+    _write_gui_destinations([*moved, *items], migrated=True)
+    actions.record("migrate_config", f"Moved {len(moved)} built-in destinations into the app", {"ids": [d["id"] for d in moved]})
+    return {"migrated": len(moved), "already": False, "destinations": len(cfg.honeymoon)}
+
+
+@app.get("/api/migration")
+def migration_status():
+    items, migrated = _read_store()
+    have = {d["id"] for d in items}
+    return {"migrated": migrated, "pending": 0 if migrated else len([d for d in _config_file_destinations() if d.get("id") not in have])}
+
+
+@app.post("/api/migrate-config")
+def migrate_config():
+    return _migrate_config()
 
 
 def _read_gui_destinations(path: Path) -> list[dict]:
@@ -324,7 +425,7 @@ def reload_config():
 
 # --- Claude's tools (MCP) and the approval queue --------------------------------------------------
 
-MAX_APP_DESTINATIONS = 20   # each destination adds Google Flights searches; cap what a model can pile on
+MAX_APP_DESTINATIONS = 30   # each destination adds Google Flights searches; cap what a model can pile on
 
 
 def _as_tool_error(fn):
@@ -344,7 +445,9 @@ def _tool_list_destinations(_args: dict):
     return [{"id": d.id, "name": d.name, "country": d.country, "airports": d.airports,
              "leave_wedding_city": (d.start_dates or [None])[0], "leave_destination": (d.end_dates or [None])[0],
              "extended_stay": d.extended_stay,
-             "editable": d.id in app_ids} for d in cfg.honeymoon]
+             "editable": d.id in app_ids,
+             **({} if d.id in app_ids else {"note": "config.yaml destination; user must click 'Move built-in destinations into the app' to make it editable"})}
+            for d in cfg.honeymoon]
 
 
 def _tool_best_trips(_args: dict):
@@ -371,7 +474,7 @@ def _tool_request_remove(args: dict):
     destination_id = str(args.get("id", ""))
     match = next((d for d in _gui_destinations() if d["id"] == destination_id), None)
     if match is None:
-        raise mcp.ToolError(f"'{destination_id}' is not a destination added through the app")
+        raise mcp.ToolError(NOT_MANAGED.format(id=destination_id))
     if not actions.pending_for("remove_destination", destination_id):
         actions.record("remove_destination", f"Remove {match['name']}", {"id": destination_id, "name": match["name"]},
                        status="pending")

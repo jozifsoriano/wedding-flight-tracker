@@ -13,6 +13,7 @@ const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValu
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
+  if (r.status === 401 && !path.startsWith("/api/auth/")) { location.reload(); throw new Error("Login required"); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }
@@ -375,3 +376,32 @@ async function renderAskPanel() {
     });
   } catch (e) { $("#ask-caps").textContent = e.message; }
 }
+
+// ---------- login / logout / migration ----------
+(async function initAuth() {
+  try {
+    const st = await api("/api/auth/status");
+    if (!st.enabled) return;
+    const btn = $("#logout-btn");
+    btn.hidden = false;
+    btn.addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.reload(); });
+  } catch {}
+})();
+
+async function renderMigration() {
+  try {
+    const m = await api("/api/migration");
+    $("#migrate-panel").hidden = m.migrated;
+    $("#migrate-count").textContent = m.pending;
+  } catch {}
+}
+$("#migrate-btn").addEventListener("click", async () => {
+  const msg = $("#migrate-msg");
+  $("#migrate-btn").disabled = true;
+  try {
+    const r = await api("/api/migrate-config", { method: "POST" });
+    msg.textContent = `Moved ${r.migrated} destinations. They can now be edited or removed in the app and by Claude.`;
+    await load();
+  } catch (e) { msg.textContent = e.message; } finally { $("#migrate-btn").disabled = false; renderMigration(); }
+});
+renderMigration();

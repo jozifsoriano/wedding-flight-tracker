@@ -10,8 +10,8 @@ from typing import Any, Callable
 
 log = logging.getLogger(__name__)
 SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
-INSTRUCTIONS = ("Tools for the wedding flight tracker. Destinations from config.yaml are read-only; "
-                "only destinations added through the app can be changed. Removing a destination needs the "
+INSTRUCTIONS = ("Tools for the wedding flight tracker. Only destinations managed by the app can be changed "
+                "(config.yaml ones until the user moves them into the app). Removing a destination needs the "
                 "user's approval in the Ask Claude tab.")
 
 

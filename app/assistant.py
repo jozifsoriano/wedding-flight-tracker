@@ -6,6 +6,8 @@ import time
 
 import httpx
 
+from . import auth
+
 TIMEOUT = 200.0   # the bridge allows claude 180s
 
 
@@ -48,7 +50,8 @@ def revoke(token: str) -> None:
 
 
 def enabled() -> bool:
-    return bool(os.environ.get("CLAUDE_BRIDGE_URL") and os.environ.get("CLAUDE_BRIDGE_TOKEN"))
+    """Claude features stay off until the app has a login (they can spend the Claude plan and change data)."""
+    return auth.enabled() and bool(os.environ.get("CLAUDE_BRIDGE_URL") and os.environ.get("CLAUDE_BRIDGE_TOKEN"))
 
 
 def trip_context(best_trips: list[dict], limit: int = 6) -> str:
@@ -59,7 +62,7 @@ def trip_context(best_trips: list[dict], limit: int = 6) -> str:
 
 def ask(question: str, context: str, session_id: str | None = None) -> dict:
     if not enabled():
-        raise AssistantError("Claude bridge is not configured (set CLAUDE_BRIDGE_URL and CLAUDE_BRIDGE_TOKEN)", 503)
+        raise AssistantError("Claude is not configured: it needs a login (APP_PASSWORD_HASH) plus CLAUDE_BRIDGE_URL and CLAUDE_BRIDGE_TOKEN", 503)
     url = os.environ["CLAUDE_BRIDGE_URL"].rstrip("/") + "/ask"
     headers = {"Authorization": f"Bearer {os.environ['CLAUDE_BRIDGE_TOKEN']}"}
     body = {"prompt": f"{context}\n\nQuestion: {question}", "session_id": session_id}

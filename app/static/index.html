@@ -18,6 +18,7 @@
     <div class="run">
       <span id="run-status" class="muted small"></span>
       <button id="run-btn" class="btn">Refresh prices</button>
+      <button id="logout-btn" class="btn" hidden>Log out</button>
     </div>
   </div>
   <nav class="wrap tabs" role="tablist">
@@ -65,6 +66,14 @@
   </section>
 
   <section id="tab-add-city" class="tab" hidden>
+    <div id="migrate-panel" class="panel" hidden>
+      <h2>Manage built-in destinations here</h2>
+      <p class="muted">Tokyo, Osaka and the other <span id="migrate-count">0</span> destinations come from <code>config.yaml</code>, so they can't be edited or removed in the app. This copies them (with all their notes and settings) into the app's own store. <code>config.yaml</code> is not changed; its destination list is ignored afterwards.</p>
+      <div class="form-actions">
+        <button id="migrate-btn" class="btn" type="button">Move built-in destinations into the app</button>
+        <span id="migrate-msg" class="muted small" role="status"></span>
+      </div>
+    </div>
     <div class="panel">
       <h2>Add a city / flight plan</h2>
       <p class="muted">Track a city after the wedding on its own dates. The dashboard prices the DAD hop and compares separate long-haul tickets with a multi-city ticket.</p>
@@ -118,6 +127,6 @@
 <footer class="wrap muted small">
   Prices are Google Flights totals for all travelers, in your currency, and change constantly — always confirm on the airline/OTA before booking.
 </footer>
-<script src="/static/app.js?v=6"></script>
+<script src="/static/app.js?v=7"></script>
 </body>
 </html>

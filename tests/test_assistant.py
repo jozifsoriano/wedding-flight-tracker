@@ -14,13 +14,34 @@ import claude_bridge  # noqa: E402
 from tests.test_api import client  # noqa: E402,F401
 
 
+PASSWORD = "correct horse battery"
+
+
+@pytest.fixture
+def logged_in(client, monkeypatch):
+    """Turn the login on and sign the test client in."""
+    from app import auth
+    monkeypatch.setenv("APP_PASSWORD_HASH", auth.hash_password(PASSWORD))
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    assert client.post("/api/auth/login", json={"password": PASSWORD}).status_code == 200
+    return client
+
+
+def test_claude_stays_off_without_a_login(client, monkeypatch):
+    monkeypatch.setenv("CLAUDE_BRIDGE_URL", "http://bridge:8791")
+    monkeypatch.setenv("CLAUDE_BRIDGE_TOKEN", "tok")
+    monkeypatch.setenv("APP_URL", "http://app:8000")
+    assert client.get("/api/assistant").json() == {"enabled": False, "can_manage": False}
+    assert client.post("/api/ask", json={"question": "hi"}).status_code == 503
+
+
 def test_disabled_without_env(client, monkeypatch):
     monkeypatch.delenv("CLAUDE_BRIDGE_URL", raising=False)
     assert client.get("/api/assistant").json() == {"enabled": False, "can_manage": False}
     assert client.post("/api/ask", json={"question": "hi"}).status_code == 503
 
 
-def test_ask_forwards_to_bridge(client, monkeypatch):
+def test_ask_forwards_to_bridge(logged_in, client, monkeypatch):
     monkeypatch.setenv("CLAUDE_BRIDGE_URL", "http://bridge:8787/")
     monkeypatch.setenv("CLAUDE_BRIDGE_TOKEN", "tok")
     seen = {}
@@ -36,7 +57,7 @@ def test_ask_forwards_to_bridge(client, monkeypatch):
     assert "good deal?" in seen["json"]["prompt"] and seen["json"]["session_id"] == "s0"
 
 
-def test_bridge_failure_is_502(client, monkeypatch):
+def test_bridge_failure_is_502(logged_in, client, monkeypatch):
     monkeypatch.setenv("CLAUDE_BRIDGE_URL", "http://bridge:8787")
     monkeypatch.setenv("CLAUDE_BRIDGE_TOKEN", "tok")
     def boom(*a, **k): raise httpx.ConnectError("down")
@@ -66,11 +87,13 @@ from app import actions, mcp  # noqa: E402
 
 
 @pytest.fixture
-def tools_client(client, monkeypatch, cfg, tmp_path):
+def tools_client(logged_in, client, monkeypatch, cfg, tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(yaml.safe_dump(cfg.model_dump(), sort_keys=False))
     monkeypatch.setattr(main, "CONFIG_PATH", config_path)
     monkeypatch.delenv("GUI_DESTINATIONS_PATH", raising=False)
+    monkeypatch.setenv("CLAUDE_BRIDGE_URL", "http://bridge:8791")
+    monkeypatch.setenv("CLAUDE_BRIDGE_TOKEN", "tok")
     token = assistant.mint_token()
     client.headers.update({"Authorization": f"Bearer {token}"})
     return client
@@ -90,7 +113,8 @@ SEOUL = {"name": "Seoul", "country": "South Korea", "airports": ["icn"],
          "start_date": "2027-03-15", "end_date": "2027-03-19"}
 
 
-def test_mcp_requires_valid_token(client):
+def test_mcp_requires_valid_token(logged_in, client):
+    client.cookies.clear()   # the tool endpoint must work on its token alone, and need no session
     msg = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
     assert client.post("/mcp", json=msg).status_code == 401
     assert client.post("/mcp", json=msg, headers={"Authorization": "Bearer nope"}).status_code == 401
@@ -121,7 +145,7 @@ def test_claude_can_add_and_update_but_not_edit_config_destinations(tools_client
     assert not err and main.cfg.honeymoon[-1].end_dates == ["2027-03-21"]
 
     err, text = call(tools_client, "update_destination", {"id": "tokyo", "end_date": "2027-03-21"})
-    assert err and "config.yaml" in text    # tokyo comes from config.yaml
+    assert err and "Move built-in destinations" in text    # tokyo comes from config.yaml until migrated
     err, _ = call(tools_client, "update_destination", {"id": "seoul", "end_date": "2027-03-01"})
     assert err                               # before start date
     err, text = call(tools_client, "add_destination", SEOUL)
@@ -174,7 +198,7 @@ def test_app_destination_limit(tools_client, monkeypatch):
     assert err and "Limit" in text
 
 
-def test_ask_attaches_tools_only_when_app_url_set(client, monkeypatch):
+def test_ask_attaches_tools_only_when_app_url_set(logged_in, client, monkeypatch):
     monkeypatch.setenv("CLAUDE_BRIDGE_URL", "http://bridge:8791")
     monkeypatch.setenv("CLAUDE_BRIDGE_TOKEN", "tok")
     sent = []
