@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from . import db, tracker
+from . import assistant, db, tracker
 from .config import CONFIG_PATH, Config, gui_destinations_path, load_config
 from .plans import PLAN_TYPES, best_by, compute_plans
 from .searches import build_searches
@@ -168,6 +168,26 @@ def searches():
 def search_history(key: str):
     rows = db.quotes.find({"key": key, "min_price": {"$ne": None}}, {"_id": 0, "fetched_at": 1, "min_price": 1})
     return [{"at": _iso(r["fetched_at"]), "total": r["min_price"]} for r in rows.sort("fetched_at", 1)]
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    session_id: str | None = Field(default=None, max_length=100)
+
+
+@app.get("/api/assistant")
+def assistant_status():
+    return {"enabled": assistant.enabled()}
+
+
+@app.post("/api/ask")
+def ask_claude(request: AskRequest):
+    plans = compute_plans(cfg, db.latest_quotes({s.key for s in build_searches(cfg)}))
+    best = sorted(best_by(plans, "destination_id").values(), key=lambda p: p["total"])
+    try:
+        return assistant.ask(request.question.strip(), assistant.trip_context(best), request.session_id)
+    except assistant.AssistantError as e:
+        raise HTTPException(e.status, str(e))
 
 
 @app.post("/api/run")

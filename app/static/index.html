@@ -27,6 +27,7 @@
     <button role="tab" data-tab="ideas">Honeymoon ideas</button>
     <button role="tab" data-tab="add-city">Add a city</button>
     <button role="tab" data-tab="searches">Searches</button>
+    <button role="tab" data-tab="ask">Ask Claude</button>
   </nav>
 </header>
 
@@ -89,11 +90,27 @@
     <div id="status-panel" class="panel"></div>
     <div class="table-wrap"><table id="searches-table" class="data"></table></div>
   </section>
+
+  <section id="tab-ask" class="tab" hidden>
+    <div class="panel">
+      <h2>Ask Claude</h2>
+      <p class="muted">Questions go through your homelab Claude Code, which can use Slicktrip and sees your cheapest tracked trips.</p>
+      <div id="ask-log" class="small" aria-live="polite"></div>
+      <form id="ask-form">
+        <label>Question <input id="ask-input" required maxlength="2000" placeholder="Is the Tokyo honeymoon fare a good deal?"></label>
+        <div class="form-actions">
+          <button id="ask-btn" class="btn" type="submit">Ask</button>
+          <button id="ask-reset" class="btn" type="button">New chat</button>
+          <span id="ask-msg" class="muted small" role="status"></span>
+        </div>
+      </form>
+    </div>
+  </section>
 </main>
 
 <footer class="wrap muted small">
   Prices are Google Flights totals for all travelers, in your currency, and change constantly — always confirm on the airline/OTA before booking.
 </footer>
-<script src="/static/app.js?v=4"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>

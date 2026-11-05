@@ -301,3 +301,38 @@ async function load() {
 let startTab = "best";
 try { startTab = localStorage.getItem("tab") || "best"; } catch {}
 load().then(() => showTab(startTab)).catch((e) => { $("#trip-summary").textContent = "Can't reach the server: " + e.message; });
+
+// --- Ask Claude (via the homelab Claude Code bridge) ---
+let askSession = null;
+function askAppend(who, text) {
+  const p = document.createElement("p");
+  const b = document.createElement("strong");
+  b.textContent = who + ": ";
+  p.append(b, document.createTextNode(text));   // textContent only: model output is never injected as HTML
+  p.style.whiteSpace = "pre-wrap";
+  $("#ask-log").append(p);
+}
+$("#ask-reset").addEventListener("click", () => { askSession = null; $("#ask-log").textContent = ""; $("#ask-msg").textContent = ""; });
+$("#ask-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const question = $("#ask-input").value.trim();
+  if (!question) return;
+  const button = $("#ask-btn"), message = $("#ask-msg");
+  button.disabled = true;
+  message.textContent = "Thinking…";
+  askAppend("You", question);
+  $("#ask-input").value = "";
+  try {
+    const r = await api("/api/ask", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, session_id: askSession }),
+    });
+    askSession = r.session_id || askSession;
+    askAppend("Claude", r.answer);
+    message.textContent = "";
+  } catch (e) {
+    message.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+});

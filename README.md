@@ -61,6 +61,10 @@ After editing `config.yaml`, click **Searches → Reload config.yaml** in the UI
 - **`google`** (default, free): scrapes Google Flights with the [`fast-flights`](https://github.com/AWeirdDev/flights) library, directly from your homelab IP. It can't price multi-city tickets. If Google changes its page markup the scraper can break until the library is updated (`pip` pin in `requirements.txt`).
 - **`serpapi`** (optional, paid): put `SERPAPI_KEY` in `.env` to turn on true multi-city business tickets (one set of searches per gateway × honeymoon hub). `serpapi_monthly_budget` caps usage. The free tier (~250/month) is enough for multi-city searches at a 12h interval with the default dates.
 
+## Ask Claude (Claude Code + Slicktrip MCP)
+
+The **Ask Claude** tab sends questions, plus your cheapest tracked trips, to a small bridge running on the homelab VM that has Claude Code. That VM holds the Slicktrip OAuth login (`https://slicktrip.com/mcp`), so no Slicktrip credential lives in this app. Setup steps are in [`bridge/README.md`](bridge/README.md). Then set `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN` in `.env` and restart. The tab shows an error until both are set.
+
 ## Notes
 
 - Google Flights prices change constantly and include taxes. Always confirm on the airline's site before you book. Each price in the UI links to that exact search on Google Flights.

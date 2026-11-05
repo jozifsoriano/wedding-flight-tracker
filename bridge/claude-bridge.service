@@ -1,0 +1,15 @@
+[Unit]
+Description=Claude Code bridge for the wedding flight tracker
+After=network-online.target
+
+[Service]
+# Runs as the user that did `claude mcp add` + the Slicktrip OAuth login.
+User=CHANGE_ME
+WorkingDirectory=/var/lib/claude-bridge
+EnvironmentFile=/etc/claude-bridge.env
+ExecStart=/usr/bin/python3 /opt/claude-bridge/claude_bridge.py
+Restart=on-failure
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
