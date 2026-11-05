@@ -22,7 +22,7 @@ def mdb(monkeypatch):
     client = mongomock.MongoClient(tz_aware=True)
     database = client["wedding_flights_test"]
     monkeypatch.setattr(db, "db", database)
-    for name in ("quotes", "plan_history", "runs"):
+    for name in ("quotes", "plan_history", "runs", "actions"):
         monkeypatch.setattr(db, name, database[name])
     db.ensure_indexes()
     yield database

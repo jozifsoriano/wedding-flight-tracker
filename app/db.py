@@ -8,6 +8,7 @@ db = _client[os.environ.get("MONGO_DB", "wedding_flights")]
 quotes = db.quotes              # one doc per search per run
 plan_history = db.plan_history  # best total per (destination, plan type) per run
 runs = db.runs                  # run log + SerpApi usage counting
+actions = db.actions            # changes Claude made + removals awaiting approval
 
 
 def ensure_indexes() -> None:
@@ -15,6 +16,7 @@ def ensure_indexes() -> None:
     quotes.create_index([("run_id", ASCENDING)])
     plan_history.create_index([("destination_id", ASCENDING), ("at", ASCENDING)])
     runs.create_index([("started_at", DESCENDING)])
+    actions.create_index([("status", ASCENDING), ("created_at", DESCENDING)])
 
 
 def latest_quotes(keys) -> dict:

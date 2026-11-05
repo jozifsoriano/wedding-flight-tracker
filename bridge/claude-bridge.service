@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 # Runs as the user that did `claude mcp add` + the Slicktrip OAuth login.
 User=CHANGE_ME
-WorkingDirectory=/var/lib/claude-bridge
+WorkingDirectory=/opt/claude-bridge
 EnvironmentFile=/etc/claude-bridge.env
 ExecStart=/usr/bin/python3 /opt/claude-bridge/claude_bridge.py
 Restart=on-failure

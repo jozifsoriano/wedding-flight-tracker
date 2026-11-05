@@ -9,12 +9,12 @@ from pathlib import Path
 
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import Body, FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from . import assistant, db, tracker
+from . import actions, assistant, db, mcp, tracker
 from .config import CONFIG_PATH, Config, gui_destinations_path, load_config
 from .plans import PLAN_TYPES, best_by, compute_plans
 from .searches import build_searches
@@ -175,23 +175,30 @@ class AskRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=100)
 
 
+def _best_trips() -> list[dict]:
+    plans = compute_plans(cfg, db.latest_quotes({s.key for s in build_searches(cfg)}))
+    return sorted(best_by(plans, "destination_id").values(), key=lambda p: p["total"])
+
+
 @app.get("/api/assistant")
 def assistant_status():
-    return {"enabled": assistant.enabled()}
+    return {"enabled": assistant.enabled(), "can_manage": assistant.tools_enabled()}
 
 
 @app.post("/api/ask")
 def ask_claude(request: AskRequest):
-    plans = compute_plans(cfg, db.latest_quotes({s.key for s in build_searches(cfg)}))
-    best = sorted(best_by(plans, "destination_id").values(), key=lambda p: p["total"])
     try:
-        return assistant.ask(request.question.strip(), assistant.trip_context(best), request.session_id)
+        return assistant.ask(request.question.strip(), assistant.trip_context(_best_trips()), request.session_id)
     except assistant.AssistantError as e:
         raise HTTPException(e.status, str(e))
 
 
 @app.post("/api/run")
 def run_now():
+    return _start_refresh()
+
+
+def _start_refresh() -> dict:
     if tracker.state["running"]:
         raise HTTPException(409, "A refresh is already running")
     threading.Thread(target=tracker.run_all, args=(cfg,), daemon=True).start()
@@ -201,13 +208,51 @@ def run_now():
 @app.post("/api/destinations", status_code=201)
 def add_destination(request: AddDestinationRequest):
     """Persist a destination added through the GUI and begin tracking its itinerary."""
-    global cfg
-    destination_id = re.sub(r"[^a-z0-9]+", "-", request.name.lower()).strip("-")
+    return _add_destination(request)
+
+
+def _destination_id(name: str) -> str:
+    destination_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
     if not destination_id:
         raise HTTPException(422, "City name must contain letters or numbers")
+    return destination_id
+
+
+def _validate_honeymoon(destinations: list) -> None:
+    try:
+        Config.model_validate({**cfg.model_dump(), "honeymoon": destinations})
+    except ValidationError as e:
+        raise HTTPException(400, f"Destination is invalid: {e}") from e
+
+
+def _write_gui_destinations(items: list[dict]) -> None:
+    global cfg
+    path = gui_destinations_path(CONFIG_PATH)
+    temp_path = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as temp:
+            temp_path = Path(temp.name)
+            yaml.safe_dump(items, temp, sort_keys=False, allow_unicode=True)
+        os.replace(temp_path, path)
+    except OSError as e:
+        raise HTTPException(500, f"Could not save destination: {e}") from e
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink()
+    cfg = load_config(CONFIG_PATH)
+
+
+def _gui_destinations() -> list[dict]:
+    return _read_gui_destinations(gui_destinations_path(CONFIG_PATH))
+
+
+def _add_destination(request: AddDestinationRequest) -> dict:
+    destination_id = _destination_id(request.name)
     if any(d.id == destination_id for d in cfg.honeymoon):
         raise HTTPException(409, f"{request.name} is already being tracked")
-
     destination = {
         "id": destination_id,
         "name": request.name,
@@ -217,35 +262,43 @@ def add_destination(request: AddDestinationRequest):
         "end_dates": [request.end_date.isoformat()],
         "extended_stay": request.extended_stay,
     }
-    updated = [*cfg.honeymoon, destination]
-    try:
-        Config.model_validate({**cfg.model_dump(), "honeymoon": updated})
-    except ValidationError as e:
-        raise HTTPException(400, f"Destination is invalid: {e}") from e
-
-    path = gui_destinations_path(CONFIG_PATH)
-    temp_path = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
-        ) as temp:
-            temp_path = Path(temp.name)
-            yaml.safe_dump(
-                [*(_read_gui_destinations(path)), destination],
-                temp,
-                sort_keys=False,
-                allow_unicode=True,
-            )
-        os.replace(temp_path, path)
-    except OSError as e:
-        raise HTTPException(500, f"Could not save destination: {e}") from e
-    finally:
-        if temp_path and temp_path.exists():
-            temp_path.unlink()
-
-    cfg = load_config(CONFIG_PATH)
+    _validate_honeymoon([*cfg.honeymoon, destination])
+    _write_gui_destinations([*_gui_destinations(), destination])
     return {"destination": destination, "searches": len(build_searches(cfg))}
+
+
+def _update_destination(destination_id: str, changes: dict) -> dict:
+    items = _gui_destinations()
+    index = next((i for i, d in enumerate(items) if d["id"] == destination_id), None)
+    if index is None:
+        raise HTTPException(404, f"'{destination_id}' is not a destination added through the app "
+                                 "(config.yaml destinations can only be edited in the file)")
+    current = items[index]
+    try:
+        merged = AddDestinationRequest(
+            name=changes.get("name", current["name"]), country=changes.get("country", current["country"]),
+            airports=changes.get("airports", current["airports"]),
+            start_date=changes.get("start_date", (current.get("start_dates") or [None])[0]),
+            end_date=changes.get("end_date", (current.get("end_dates") or [None])[0]),
+            extended_stay=changes.get("extended_stay", current.get("extended_stay", True)))
+    except ValidationError as e:
+        raise HTTPException(422, f"Update is invalid: {e}") from e
+    updated = {**current, "name": merged.name, "country": merged.country, "airports": merged.airports,
+               "start_dates": [merged.start_date.isoformat()], "end_dates": [merged.end_date.isoformat()],
+               "extended_stay": merged.extended_stay}
+    others = [d for d in cfg.honeymoon if d.id != destination_id]
+    _validate_honeymoon([*others, updated])
+    items[index] = updated
+    _write_gui_destinations(items)
+    return {"destination": updated, "searches": len(build_searches(cfg))}
+
+
+def _remove_destination(destination_id: str) -> dict:
+    items = _gui_destinations()
+    if not any(d["id"] == destination_id for d in items):
+        raise HTTPException(404, f"'{destination_id}' is not a destination added through the app")
+    _write_gui_destinations([d for d in items if d["id"] != destination_id])
+    return {"removed": destination_id, "searches": len(build_searches(cfg))}
 
 
 def _read_gui_destinations(path: Path) -> list[dict]:
@@ -267,3 +320,133 @@ def reload_config():
         raise HTTPException(400, f"config.yaml is invalid: {e}")
     schedule_job(run_now=False)
     return {"reloaded": True, "searches": len(build_searches(cfg))}
+
+
+# --- Claude's tools (MCP) and the approval queue --------------------------------------------------
+
+MAX_APP_DESTINATIONS = 20   # each destination adds Google Flights searches; cap what a model can pile on
+
+
+def _as_tool_error(fn):
+    def run(args: dict):
+        try:
+            return fn(args)
+        except HTTPException as e:
+            raise mcp.ToolError(str(e.detail)) from e
+        except ValidationError as e:
+            raise mcp.ToolError("Invalid arguments: " + "; ".join(
+                f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())) from e
+    return run
+
+
+def _tool_list_destinations(_args: dict):
+    app_ids = {d["id"] for d in _gui_destinations()}
+    return [{"id": d.id, "name": d.name, "country": d.country, "airports": d.airports,
+             "leave_wedding_city": (d.start_dates or [None])[0], "leave_destination": (d.end_dates or [None])[0],
+             "extended_stay": d.extended_stay,
+             "editable": d.id in app_ids} for d in cfg.honeymoon]
+
+
+def _tool_best_trips(_args: dict):
+    return [{"destination": p["destination"], "plan": p["type"], "total_for_both": p["total"]}
+            for p in _best_trips()]
+
+
+def _tool_add(args: dict):
+    if len(_gui_destinations()) >= MAX_APP_DESTINATIONS:
+        raise mcp.ToolError(f"Limit of {MAX_APP_DESTINATIONS} app-added destinations reached; ask the user to remove some.")
+    result = _add_destination(AddDestinationRequest(**args))
+    actions.record("add_destination", f"Added {result['destination']['name']}", result["destination"])
+    return result
+
+
+def _tool_update(args: dict):
+    destination_id = str(args.get("id", ""))
+    result = _update_destination(destination_id, {k: v for k, v in args.items() if k != "id"})
+    actions.record("update_destination", f"Updated {result['destination']['name']}", result["destination"])
+    return result
+
+
+def _tool_request_remove(args: dict):
+    destination_id = str(args.get("id", ""))
+    match = next((d for d in _gui_destinations() if d["id"] == destination_id), None)
+    if match is None:
+        raise mcp.ToolError(f"'{destination_id}' is not a destination added through the app")
+    if not actions.pending_for("remove_destination", destination_id):
+        actions.record("remove_destination", f"Remove {match['name']}", {"id": destination_id, "name": match["name"]},
+                       status="pending")
+    return (f"Removal of {match['name']} is waiting for the user to approve it in the Ask Claude tab. "
+            "It has NOT been removed. Tell the user to approve it there.")
+
+
+def _tool_refresh(_args: dict):
+    return _start_refresh()
+
+
+_DEST_PROPS = {
+    "name": {"type": "string", "description": "City name, e.g. Seoul"},
+    "country": {"type": "string"},
+    "airports": {"type": "array", "items": {"type": "string"}, "description": "3-letter IATA codes, e.g. [\"ICN\"]"},
+    "start_date": {"type": "string", "description": "YYYY-MM-DD: date leaving the wedding city (Da Nang)"},
+    "end_date": {"type": "string", "description": "YYYY-MM-DD: date leaving the destination to fly home; after start_date"},
+    "extended_stay": {"type": "boolean", "description": "true = no return hop to Da Nang"},
+}
+TOOLS = {t.name: t for t in [
+    mcp.Tool("list_destinations", "List tracked honeymoon destinations and whether each can be edited.",
+             {"type": "object", "properties": {}}, _as_tool_error(_tool_list_destinations), read_only=True),
+    mcp.Tool("get_best_trips", "Cheapest complete trip per destination with current prices (totals for both travelers).",
+             {"type": "object", "properties": {}}, _as_tool_error(_tool_best_trips), read_only=True),
+    mcp.Tool("add_destination", "Start tracking a new destination/flight plan.",
+             {"type": "object", "properties": _DEST_PROPS,
+              "required": ["name", "country", "airports", "start_date", "end_date"]}, _as_tool_error(_tool_add)),
+    mcp.Tool("update_destination", "Change an app-added destination (dates, airports, name, extended_stay). "
+             "Cannot edit config.yaml destinations.",
+             {"type": "object", "properties": {"id": {"type": "string"}, **_DEST_PROPS}, "required": ["id"]},
+             _as_tool_error(_tool_update)),
+    mcp.Tool("request_remove_destination", "Ask the user to approve removing an app-added destination. "
+             "Nothing is removed until the user approves in the UI.",
+             {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
+             _as_tool_error(_tool_request_remove)),
+    mcp.Tool("refresh_prices", "Start a price refresh now (takes several minutes).",
+             {"type": "object", "properties": {}}, _as_tool_error(_tool_refresh)),
+]}
+
+
+@app.post("/mcp")
+def mcp_endpoint(message: dict = Body(...), authorization: str = Header(default="")):
+    """Claude's tool endpoint. Needs the per-question token the app hands the bridge; no UI route is reachable this way."""
+    if not assistant.token_valid(authorization.removeprefix("Bearer ").strip()):
+        raise HTTPException(401, "Invalid or expired token")
+    reply = mcp.handle(message, TOOLS)
+    if reply is None:
+        return Response(status_code=202)
+    return reply
+
+
+@app.get("/api/actions")
+def list_actions():
+    return actions.list_recent()
+
+
+@app.post("/api/actions/{action_id}/approve")
+def approve_action(action_id: str):
+    action = actions.claim(action_id, "approved")
+    if action is None:
+        raise HTTPException(404, "No pending action with that id (already handled?)")
+    try:
+        if action["kind"] == "remove_destination":
+            _remove_destination(action["payload"]["id"])
+        else:
+            raise HTTPException(400, f"Cannot run action kind {action['kind']}")
+    except HTTPException as e:
+        actions.finish(action_id, "failed", str(e.detail))
+        raise
+    actions.finish(action_id, "applied")
+    return {"approved": action_id}
+
+
+@app.post("/api/actions/{action_id}/reject")
+def reject_action(action_id: str):
+    if actions.claim(action_id, "rejected") is None:
+        raise HTTPException(404, "No pending action with that id (already handled?)")
+    return {"rejected": action_id}

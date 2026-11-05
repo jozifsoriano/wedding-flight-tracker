@@ -95,6 +95,7 @@
     <div class="panel">
       <h2>Ask Claude</h2>
       <p class="muted">Questions go through your homelab Claude Code, which can use Slicktrip and sees your cheapest tracked trips.</p>
+      <p id="ask-caps" class="muted small"></p>
       <div id="ask-log" class="small" aria-live="polite"></div>
       <form id="ask-form">
         <label>Question <input id="ask-input" required maxlength="2000" placeholder="Is the Tokyo honeymoon fare a good deal?"></label>
@@ -105,12 +106,18 @@
         </div>
       </form>
     </div>
+    <div class="panel">
+      <h2>Changes by Claude</h2>
+      <p class="muted small">Additions and edits apply immediately and are listed here. Removals wait for your approval.</p>
+      <div id="ask-pending"></div>
+      <ul id="ask-recent" class="small"></ul>
+    </div>
   </section>
 </main>
 
 <footer class="wrap muted small">
   Prices are Google Flights totals for all travelers, in your currency, and change constantly — always confirm on the airline/OTA before booking.
 </footer>
-<script src="/static/app.js?v=5"></script>
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>

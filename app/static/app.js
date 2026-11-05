@@ -23,6 +23,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== `tab-${name}`));
   try { localStorage.setItem("tab", name); } catch {}
+  if (name === "ask") renderAskPanel();
   if (name === "history") renderHistory();
   if (name === "searches") renderSearches();
 }
@@ -330,9 +331,47 @@ $("#ask-form").addEventListener("submit", async (event) => {
     askSession = r.session_id || askSession;
     askAppend("Claude", r.answer);
     message.textContent = "";
+    await load();
+    renderAskPanel();
   } catch (e) {
     message.textContent = e.message;
   } finally {
     button.disabled = false;
   }
 });
+
+async function renderAskPanel() {
+  try {
+    const [cap, acts] = await Promise.all([api("/api/assistant"), api("/api/actions")]);
+    $("#ask-caps").textContent = !cap.enabled ? "Claude bridge is not configured yet (see bridge/README.md)."
+      : cap.can_manage ? "Claude can add, edit and refresh destinations. Removals need your approval below."
+      : "Claude can answer questions but cannot change the tracker (set APP_URL to allow that).";
+    const pending = $("#ask-pending");
+    pending.textContent = "";
+    acts.pending.forEach((a) => {
+      const row = document.createElement("div");
+      row.className = "form-actions";
+      const label = document.createElement("span");
+      label.textContent = `${a.summary} — waiting for approval`;
+      const decide = (verb, text) => {
+        const b = document.createElement("button");
+        b.className = "btn"; b.type = "button"; b.textContent = text;
+        b.addEventListener("click", async () => {
+          b.disabled = true;
+          try { await api(`/api/actions/${a.id}/${verb}`, { method: "POST" }); await load(); } catch (e) { label.textContent = e.message; }
+          renderAskPanel();
+        });
+        return b;
+      };
+      row.append(label, decide("approve", "Approve"), decide("reject", "Reject"));
+      pending.append(row);
+    });
+    const recent = $("#ask-recent");
+    recent.textContent = "";
+    acts.recent.forEach((a) => {
+      const li = document.createElement("li");
+      li.textContent = `${new Date(a.created_at).toLocaleString()} — ${a.summary} (${a.status}${a.error ? ": " + a.error : ""})`;
+      recent.append(li);
+    });
+  } catch (e) { $("#ask-caps").textContent = e.message; }
+}

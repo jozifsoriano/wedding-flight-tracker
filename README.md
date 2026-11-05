@@ -63,7 +63,19 @@ After editing `config.yaml`, click **Searches → Reload config.yaml** in the UI
 
 ## Ask Claude (Claude Code + Slicktrip MCP)
 
-The **Ask Claude** tab sends questions, plus your cheapest tracked trips, to a small bridge running on the homelab VM that has Claude Code. That VM holds the Slicktrip OAuth login (`https://slicktrip.com/mcp`), so no Slicktrip credential lives in this app. Setup steps are in [`bridge/README.md`](bridge/README.md). Then set `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN` in `.env` and restart. The tab shows an error until both are set.
+The **Ask Claude** tab sends questions, plus your cheapest tracked trips, to a small bridge on the homelab VM that has Claude Code
+(see [`bridge/README.md`](bridge/README.md)). That VM holds the Slicktrip OAuth login (`https://slicktrip.com/mcp`), so no Slicktrip
+credential lives in this app. Set `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN` in `.env` for chat.
+
+Set `APP_URL` (how the bridge reaches this app) and Claude can also **manage the tracker** through the app's own MCP endpoint
+(`POST /mcp`, tools: `list_destinations`, `get_best_trips`, `add_destination`, `update_destination`, `request_remove_destination`,
+`refresh_prices`):
+
+- Adds and edits apply immediately and are logged under **Changes by Claude** in the tab.
+- **Removals never run on Claude's say-so.** They wait there until you click Approve.
+- Only destinations added through the app are editable; those in `config.yaml` are read-only to Claude. At most 20 app-added destinations.
+- `/mcp` only accepts a one-question token the app mints when you ask and revokes when the answer returns. The app itself has no login,
+  so keep it LAN-only.
 
 ## Notes
 
