@@ -88,7 +88,7 @@ Set `APP_URL` (how the bridge reaches this app) and Claude can also **manage the
 
 - Adds and edits apply immediately and are logged under **Changes by Claude** in the tab.
 - **Removals never run on Claude's say-so.** They wait there until you click Approve.
-- Only destinations added through the app are editable; those in `config.yaml` are read-only to Claude. At most 20 app-added destinations.
+- Claude can only change destinations the app manages (added in the app, or moved in from `config.yaml` as above), up to 30.
 - `/mcp` only accepts a one-question token the app mints when you ask and revokes when the answer returns. The tools and the Ask tab require the login above.
 
 ## Notes
