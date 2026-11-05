@@ -19,10 +19,12 @@ from app.config import Config  # noqa: E402
 def mdb(monkeypatch):
     """Every test gets a fresh in-memory Mongo and no SerpApi key from the real environment."""
     monkeypatch.delenv("SERPAPI_KEY", raising=False)
+    for name in ("APP_PASSWORD_HASH", "SESSION_SECRET", "APP_URL", "CLAUDE_BRIDGE_URL", "CLAUDE_BRIDGE_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
     client = mongomock.MongoClient(tz_aware=True)
     database = client["wedding_flights_test"]
     monkeypatch.setattr(db, "db", database)
-    for name in ("quotes", "plan_history", "runs"):
+    for name in ("quotes", "plan_history", "runs", "actions"):
         monkeypatch.setattr(db, name, database[name])
     db.ensure_indexes()
     yield database

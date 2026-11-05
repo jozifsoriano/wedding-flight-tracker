@@ -61,6 +61,36 @@ After editing `config.yaml`, click **Searches → Reload config.yaml** in the UI
 - **`google`** (default, free): scrapes Google Flights with the [`fast-flights`](https://github.com/AWeirdDev/flights) library, directly from your homelab IP. It can't price multi-city tickets. If Google changes its page markup the scraper can break until the library is updated (`pip` pin in `requirements.txt`).
 - **`serpapi`** (optional, paid): put `SERPAPI_KEY` in `.env` to turn on true multi-city business tickets (one set of searches per gateway × honeymoon hub). `serpapi_monthly_budget` caps usage. The free tier (~250/month) is enough for multi-city searches at a 12h interval with the default dates.
 
+## Login
+
+Set `APP_PASSWORD_HASH` (and `SESSION_SECRET`) in `.env` to put the whole app behind a password. Generate them with
+`docker compose run --rm -it flight-tracker python -m app.auth`, paste the two lines into `.env` in single quotes, and recreate the container.
+Sessions are a signed HttpOnly, SameSite=Strict cookie (7 days; `Secure` when served over HTTPS); five wrong passwords from one address lock
+it out for five minutes. `/healthz` (Docker healthcheck) and `/mcp` (its own per-question token) are the only paths open without a session.
+Without `APP_PASSWORD_HASH` the dashboard stays open as before, but **Ask Claude and Claude's tools stay off**.
+
+## Managing the built-in destinations
+
+Destinations in `config.yaml` are read-only until you click **Move built-in destinations into the app** on the *Add a city* tab. That copies
+them, with every field, into `user-data/user_destinations.yaml`, which becomes the source of truth (`config.yaml`'s destination list is then
+ignored and the file is never modified). After that you and Claude can edit or remove any of them. To undo it, delete the `migrated: true`
+line from that file.
+
+## Ask Claude (Claude Code + Slicktrip MCP)
+
+The **Ask Claude** tab sends questions, plus your cheapest tracked trips, to a small bridge on the homelab VM that has Claude Code
+(see [`bridge/README.md`](bridge/README.md)). That VM holds the Slicktrip OAuth login (`https://slicktrip.com/mcp`), so no Slicktrip
+credential lives in this app. Set `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN` in `.env` for chat.
+
+Set `APP_URL` (how the bridge reaches this app) and Claude can also **manage the tracker** through the app's own MCP endpoint
+(`POST /mcp`, tools: `list_destinations`, `get_best_trips`, `add_destination`, `update_destination`, `request_remove_destination`,
+`refresh_prices`):
+
+- Adds and edits apply immediately and are logged under **Changes by Claude** in the tab.
+- **Removals never run on Claude's say-so.** They wait there until you click Approve.
+- Claude can only change destinations the app manages (added in the app, or moved in from `config.yaml` as above), up to 30.
+- `/mcp` only accepts a one-question token the app mints when you ask and revokes when the answer returns. The tools and the Ask tab require the login above.
+
 ## Notes
 
 - Google Flights prices change constantly and include taxes. Always confirm on the airline's site before you book. Each price in the UI links to that exact search on Google Flights.

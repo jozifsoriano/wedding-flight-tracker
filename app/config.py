@@ -86,12 +86,23 @@ def gui_destinations_path(config_path: Path = CONFIG_PATH) -> Path:
     return Path(os.environ.get("GUI_DESTINATIONS_PATH", default_path))
 
 
+def read_store(path: Path) -> tuple[list[dict], bool]:
+    """App-managed destinations: (destinations, migrated). The file is a YAML list (legacy) or
+    {migrated: true, destinations: [...]}; once migrated, the honeymoon list in config.yaml is ignored."""
+    if not path.exists():
+        return [], False
+    with path.open(encoding="utf-8") as f:
+        data = yaml.safe_load(f) or []
+    if isinstance(data, dict):
+        return list(data.get("destinations") or []), bool(data.get("migrated"))
+    if isinstance(data, list):
+        return data, False
+    raise ValueError("destinations file must contain a YAML list or a mapping")
+
+
 def load_config(path: Path = CONFIG_PATH) -> Config:
     with open(path) as f:
         data = yaml.safe_load(f) or {}
-    gui_path = gui_destinations_path(path)
-    if gui_path.exists():
-        with gui_path.open() as f:
-            gui_destinations = yaml.safe_load(f) or []
-        data["honeymoon"] = [*(data.get("honeymoon") or []), *gui_destinations]
+    stored, migrated = read_store(gui_destinations_path(path))
+    data["honeymoon"] = stored if migrated else [*(data.get("honeymoon") or []), *stored]
     return Config.model_validate(data)

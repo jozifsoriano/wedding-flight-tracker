@@ -13,6 +13,7 @@ const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValu
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
+  if (r.status === 401 && !path.startsWith("/api/auth/")) { location.reload(); throw new Error("Login required"); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }
@@ -23,6 +24,7 @@ function showTab(name) {
   document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === name));
   document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== `tab-${name}`));
   try { localStorage.setItem("tab", name); } catch {}
+  if (name === "ask") renderAskPanel();
   if (name === "history") renderHistory();
   if (name === "searches") renderSearches();
 }
@@ -301,3 +303,105 @@ async function load() {
 let startTab = "best";
 try { startTab = localStorage.getItem("tab") || "best"; } catch {}
 load().then(() => showTab(startTab)).catch((e) => { $("#trip-summary").textContent = "Can't reach the server: " + e.message; });
+
+// --- Ask Claude (via the homelab Claude Code bridge) ---
+let askSession = null;
+function askAppend(who, text) {
+  const p = document.createElement("p");
+  const b = document.createElement("strong");
+  b.textContent = who + ": ";
+  p.append(b, document.createTextNode(text));   // textContent only: model output is never injected as HTML
+  p.style.whiteSpace = "pre-wrap";
+  $("#ask-log").append(p);
+}
+$("#ask-reset").addEventListener("click", () => { askSession = null; $("#ask-log").textContent = ""; $("#ask-msg").textContent = ""; });
+$("#ask-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const question = $("#ask-input").value.trim();
+  if (!question) return;
+  const button = $("#ask-btn"), message = $("#ask-msg");
+  button.disabled = true;
+  message.textContent = "Thinking…";
+  askAppend("You", question);
+  $("#ask-input").value = "";
+  try {
+    const r = await api("/api/ask", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, session_id: askSession }),
+    });
+    askSession = r.session_id || askSession;
+    askAppend("Claude", r.answer);
+    message.textContent = "";
+    await load();
+    renderAskPanel();
+  } catch (e) {
+    message.textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+async function renderAskPanel() {
+  try {
+    const [cap, acts] = await Promise.all([api("/api/assistant"), api("/api/actions")]);
+    $("#ask-caps").textContent = !cap.enabled ? "Claude bridge is not configured yet (see bridge/README.md)."
+      : cap.can_manage ? "Claude can add, edit and refresh destinations. Removals need your approval below."
+      : "Claude can answer questions but cannot change the tracker (set APP_URL to allow that).";
+    const pending = $("#ask-pending");
+    pending.textContent = "";
+    acts.pending.forEach((a) => {
+      const row = document.createElement("div");
+      row.className = "form-actions";
+      const label = document.createElement("span");
+      label.textContent = `${a.summary} — waiting for approval`;
+      const decide = (verb, text) => {
+        const b = document.createElement("button");
+        b.className = "btn"; b.type = "button"; b.textContent = text;
+        b.addEventListener("click", async () => {
+          b.disabled = true;
+          try { await api(`/api/actions/${a.id}/${verb}`, { method: "POST" }); await load(); } catch (e) { label.textContent = e.message; }
+          renderAskPanel();
+        });
+        return b;
+      };
+      row.append(label, decide("approve", "Approve"), decide("reject", "Reject"));
+      pending.append(row);
+    });
+    const recent = $("#ask-recent");
+    recent.textContent = "";
+    acts.recent.forEach((a) => {
+      const li = document.createElement("li");
+      li.textContent = `${new Date(a.created_at).toLocaleString()} — ${a.summary} (${a.status}${a.error ? ": " + a.error : ""})`;
+      recent.append(li);
+    });
+  } catch (e) { $("#ask-caps").textContent = e.message; }
+}
+
+// ---------- login / logout / migration ----------
+(async function initAuth() {
+  try {
+    const st = await api("/api/auth/status");
+    if (!st.enabled) return;
+    const btn = $("#logout-btn");
+    btn.hidden = false;
+    btn.addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.reload(); });
+  } catch {}
+})();
+
+async function renderMigration() {
+  try {
+    const m = await api("/api/migration");
+    $("#migrate-panel").hidden = m.migrated;
+    $("#migrate-count").textContent = m.pending;
+  } catch {}
+}
+$("#migrate-btn").addEventListener("click", async () => {
+  const msg = $("#migrate-msg");
+  $("#migrate-btn").disabled = true;
+  try {
+    const r = await api("/api/migrate-config", { method: "POST" });
+    msg.textContent = `Moved ${r.migrated} destinations. They can now be edited or removed in the app and by Claude.`;
+    await load();
+  } catch (e) { msg.textContent = e.message; } finally { $("#migrate-btn").disabled = false; renderMigration(); }
+});
+renderMigration();
