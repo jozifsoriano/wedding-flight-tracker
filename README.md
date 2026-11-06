@@ -35,7 +35,7 @@ No Mongo yet? Use the bundled one:
 docker compose --profile with-mongo up -d --build   # and set MONGO_URI=mongodb://mongo:27017
 ```
 
-Data goes in the `wedding_flights` database, in the collections `quotes`, `plan_history` and `runs`.
+Data goes in the `wedding_flights` database, in the collections `quotes`, `plan_history`, `runs` and `actions` (changes Claude made and removals awaiting approval).
 
 ### Deployment
 
@@ -90,6 +90,64 @@ Set `APP_URL` (how the bridge reaches this app) and Claude can also **manage the
 - **Removals never run on Claude's say-so.** They wait there until you click Approve.
 - Claude can only change destinations the app manages (added in the app, or moved in from `config.yaml` as above), up to 30.
 - `/mcp` only accepts a one-question token the app mints when you ask and revokes when the answer returns. The tools and the Ask tab require the login above.
+
+## Environment variables
+
+Set these in `.env` (see `.env.example`; never commit real values). Defaults are what the code uses when the variable is unset.
+
+| Variable | Used by | Purpose |
+|---|---|---|
+| `MONGO_URI` | app | MongoDB connection string. Default `mongodb://localhost:27017` |
+| `MONGO_DB` | app | Database name. Default `wedding_flights` |
+| `SERPAPI_KEY` | app | Optional. Enables SerpApi multi-city searches |
+| `APP_PASSWORD_HASH`, `SESSION_SECRET` | app | Optional password login (see [Login](#login)). Without the hash the app is open and the Claude features are off |
+| `CLAUDE_BRIDGE_URL`, `CLAUDE_BRIDGE_TOKEN` | app | Enable the Ask Claude tab (requires login) |
+| `APP_URL` | app | URL the bridge uses to reach this app; enables Claude's `/mcp` tools |
+| `CONFIG_PATH` | app | Path to `config.yaml`. Default `/config/config.yaml` (set in the Dockerfile) |
+| `GUI_DESTINATIONS_PATH` | app | Where GUI-managed destinations are stored. `docker-compose.yml` sets `/data/user_destinations.yaml` |
+| `TAG` | compose | Image tag to build/pull. Default `dev` |
+
+The bridge has its own variables (`BRIDGE_TOKEN`, `BRIDGE_ALLOWED_APP_URL`, …); see [`bridge/README.md`](bridge/README.md).
+`docker-compose.yml` also sets `TZ: America/Chicago`.
+
+## Architecture
+
+```
+config.yaml ─┐                                    ┌─ Google Flights (fast-flights)
+user-data/   ├─► searches.py ─► tracker.py ──────►┤
+ user_destinations.yaml ─┘      (run_all)          └─ SerpApi (multi-city, optional)
+                                   │ quotes
+                                   ▼
+                               MongoDB ◄── plans.py (cheapest complete trips) ──► alerts.py (ntfy / Discord)
+                                   ▲
+ browser ──► FastAPI (main.py) ────┘      /mcp ◄── Claude bridge ◄── Ask Claude tab
+             + static dashboard (app/static)
+```
+
+| Module | Role |
+|---|---|
+| `app/main.py` | FastAPI app: dashboard API, login middleware, APScheduler job (interval from `schedule.interval_hours`), `/healthz` |
+| `app/config.py` | Pydantic models for `config.yaml`; merges in GUI-managed destinations |
+| `app/searches.py` | Expands config dates × gateways × destinations into the list of concrete `Search`es (de-duplicated by key) |
+| `app/tracker.py` | `run_all`: prices each search (one run at a time, guarded by a lock), stores a quote per search, records plan history, fires alerts |
+| `app/providers/` | `google.py` (fast-flights scrape), `serpapi.py` (multi-city), Google Flights deep-link builder |
+| `app/plans.py` | Combines the latest successful quotes into plan types and picks the cheapest per destination |
+| `app/alerts.py` | ntfy / Discord notifications |
+| `app/auth.py`, `app/assistant.py`, `app/mcp.py`, `app/actions.py` | Password login, bridge client, the `/mcp` tool endpoint, and the log/approval queue for Claude's changes |
+| `bridge/` | Separate service (not in the app image) that runs `claude -p` for Ask Claude |
+
+A run: the scheduler (or **Run** in the UI, `POST /api/run`) calls `run_all`. Each search is priced and inserted into `quotes` (failures are stored with an `error` and the run continues). Google searches wait `schedule.request_delay_seconds` between requests, and a failed one is retried once after 30 s. Then plans are rebuilt from the latest successful quote per search, each destination's best total per plan type is appended to `plan_history`, and alerts fire for new lows. The dashboard reads `quotes`/`plan_history` and recomputes plans on request.
+
+## Runbook
+
+- **Health:** `GET /healthz` (also the Docker healthcheck). Logs: `docker compose logs -f flight-tracker`.
+- **Prices are empty or stale:** check the log for `search failed` lines and the `error` field on recent `quotes`/`runs` documents. A wave of Google failures usually means the scraper broke on a markup change: update the `fast-flights` pin in `requirements.txt` and rebuild. "No flights found" for a route/date/cabin is normal for some island airports (see `fly_home_from`).
+- **A run seems stuck:** only one run happens at a time; `POST /api/run` returns nothing new while one is in progress. Restarting the container clears it.
+- **SerpApi budget:** usage is counted from `quotes` documents with `provider: serpapi` this calendar month against `providers.serpapi_monthly_budget`; extra searches fail with "SerpApi monthly budget used up".
+- **Config edits:** `config.yaml` is mounted from the host; use **Searches → Reload config.yaml** or restart. Invalid YAML or fields fail Pydantic validation.
+- **Locked out / login:** regenerate `APP_PASSWORD_HASH` and `SESSION_SECRET` with `python -m app.auth`, update `.env` and recreate the container. Changing `SESSION_SECRET` signs everyone out.
+- **Ask Claude not working:** the tab needs login plus `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN`; check `curl <bridge>/health` and `bridge/README.md`.
+- **Backups:** state lives in the Mongo database and `user-data/user_destinations.yaml` (plus your `config.yaml`). TODO: no backup or retention policy is defined in the repo.
 
 ## Notes
 
