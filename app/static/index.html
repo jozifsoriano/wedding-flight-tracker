@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wedding Flights</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="stylesheet" href="/static/style.css?v=5">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -28,6 +28,7 @@
     <button role="tab" data-tab="history">Price history</button>
     <button role="tab" data-tab="ideas">Honeymoon ideas</button>
     <button role="tab" data-tab="add-city">Add a city</button>
+    <button role="tab" data-tab="slicktrip">SlickTrip prices</button>
     <button role="tab" data-tab="searches">Searches</button>
     <button role="tab" data-tab="ask">Ask Claude</button>
   </nav>
@@ -96,6 +97,18 @@
     </div>
   </section>
 
+  <section id="tab-slicktrip" class="tab" hidden>
+    <div class="panel">
+      <h2>SlickTrip prices</h2>
+      <p class="muted">Itineraries priced by Claude through SlickTrip (via the bridge). <b>Every price is the total for all travelers on that search, in USD</b> &mdash; not per person. Arrows compare with the previous price; &ldquo;lowest&rdquo; is the cheapest seen so far.</p>
+      <div class="form-actions">
+        <button id="st-refresh" class="btn" type="button">Refresh SlickTrip prices</button>
+        <span id="st-msg" class="muted small" role="status"></span>
+      </div>
+    </div>
+    <div class="table-wrap"><table id="st-table" class="data"></table></div>
+  </section>
+
   <section id="tab-searches" class="tab" hidden>
     <div id="status-panel" class="panel"></div>
     <div class="table-wrap"><table id="searches-table" class="data"></table></div>
@@ -104,7 +117,7 @@
   <section id="tab-ask" class="tab" hidden>
     <div class="panel">
       <h2>Ask Claude</h2>
-      <p class="muted">Questions go through your homelab Claude Code, which can use Slicktrip and sees your cheapest tracked trips.</p>
+      <p class="muted">Questions go through your homelab Claude Code, which can use SlickTrip and sees your cheapest tracked trips. Replies keep their context until you click New chat.</p>
       <p id="ask-caps" class="muted small"></p>
       <div id="ask-log" class="small" aria-live="polite"></div>
       <form id="ask-form">
@@ -118,7 +131,7 @@
     </div>
     <div class="panel">
       <h2>Changes by Claude</h2>
-      <p class="muted small">Additions and edits apply immediately and are listed here. Removals wait for your approval.</p>
+      <p class="muted small">Additions and edits apply immediately and are listed here. Removals are only requests: nothing is removed until you approve it.</p>
       <div id="ask-pending"></div>
       <ul id="ask-recent" class="small"></ul>
     </div>
@@ -126,8 +139,8 @@
 </main>
 
 <footer class="wrap muted small">
-  Prices are Google Flights totals for all travelers, in your currency, and change constantly — always confirm on the airline/OTA before booking.
+  Prices are totals for all travelers (Google Flights, in your currency; SlickTrip, in USD) and change constantly — always confirm on the airline/OTA before booking.
 </footer>
-<script src="/static/app.js?v=7"></script>
+<script src="/static/app.js?v=8"></script>
 </body>
 </html>

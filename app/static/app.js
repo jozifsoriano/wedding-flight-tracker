@@ -30,6 +30,7 @@ function showTab(name) {
   if (name === "ask") renderAskPanel();
   if (name === "history") renderHistory();
   if (name === "searches") renderSearches();
+  if (name === "slicktrip") renderSlicktrip();
 }
 
 // ---------- shared bits ----------
@@ -384,6 +385,59 @@ let startTab = "best";
 try { startTab = localStorage.getItem("tab") || "best"; } catch {}
 load().then(() => showTab(startTab)).catch((e) => { $("#trip-summary").textContent = "Can't reach the server: " + e.message; });
 
+// --- SlickTrip prices (asked of Claude through the bridge; always USD, always the total for all travelers) ---
+const usd = (n) => n == null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+let stTimer = null;
+
+function dropTag(r) {
+  if (r.total == null || r.change == null) return `<span class="muted small">first price</span>`;
+  const arrow = r.trend === "down" ? "▼" : r.trend === "up" ? "▲" : "●";
+  const delta = r.change === 0 ? "no change" : `${usd(Math.abs(r.change))} (${Math.abs(r.change_pct)}%)`;
+  const low = r.is_lowest ? ` <span class="tag" title="Cheapest price seen so far">lowest seen</span>` : "";
+  return `<span class="drop ${esc(r.trend)}" title="vs previous ${usd(r.previous)}">${arrow} ${delta}</span>${low}`;
+}
+
+function statusCell(r) {
+  const flags = (r.flags || []).map((f) => ({ large_change: "price moved a lot, double-check", link_rejected: "link ignored" }[f] || f));
+  const bits = [];
+  if (r.last_status === "error" || r.last_status === "invalid") bits.push(`<span class="err">${esc(r.error || "failed")}</span>`);
+  else if (r.last_status === "no_fares") bits.push(`<span class="muted">no fares found</span>`);
+  else if (!r.last_status) bits.push(`<span class="muted">not priced yet</span>`);
+  flags.forEach((f) => bits.push(`<span class="tag">${esc(f)}</span>`));
+  return bits.join(" ");
+}
+
+async function renderSlicktrip() {
+  clearTimeout(stTimer);
+  try {
+    const d = await api("/api/slicktrip");
+    const run = d.running;
+    $("#st-refresh").disabled = run.running || !d.enabled;
+    $("#st-msg").textContent = !d.enabled ? "Needs the Claude bridge (log in and set BRIDGE_URL / BRIDGE_TOKEN)."
+      : run.running ? `Refreshing ${run.progress + 1}/${run.total}: ${run.current || ""}`
+      : run.last_error ? `Last error: ${run.last_error}` : "";
+    $("#st-table").innerHTML = `
+      <thead><tr><th>Itinerary</th><th>Type</th><th>Cabin</th><th class="num">Total for all travelers</th><th>vs previous</th><th class="num">Lowest seen</th><th>Checked</th><th>Status</th></tr></thead>
+      <tbody>${d.searches.map((r) => {
+        const legs = r.legs.map((l) => `${l.origin}→${l.destination} ${fmtDate(l.date)}`).join(", ");
+        const amt = r.total == null ? "—" : r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${usd(r.total)}</a>` : usd(r.total);
+        return `<tr>
+          <td>${esc(r.name)}<br><span class="muted small">${esc(legs)}</span></td>
+          <td>${esc(r.shape)}</td><td>${esc(r.cabin)}</td>
+          <td class="num"><b>${amt}</b><br><span class="muted small">total for ${r.travelers}</span></td>
+          <td>${dropTag(r)}</td><td class="num">${usd(r.lowest)}</td><td>${fmtWhen(r.last_checked)}</td><td>${statusCell(r)}</td>
+        </tr>`;
+      }).join("")}</tbody>`;
+    if (run.running) stTimer = setTimeout(renderSlicktrip, 8000);
+  } catch (e) { $("#st-msg").textContent = e.message; }
+}
+$("#st-refresh").addEventListener("click", async () => {
+  $("#st-refresh").disabled = true;
+  try { await api("/api/slicktrip/refresh", { method: "POST" }); } catch (e) { $("#st-msg").textContent = e.message; return; }
+  renderSlicktrip();
+  stTimer = setTimeout(renderSlicktrip, 3000);
+});
+
 // --- Ask Claude (via the homelab Claude Code bridge) ---
 let askSession = null;
 function askAppend(who, text) {
@@ -425,8 +479,8 @@ async function renderAskPanel() {
   try {
     const [cap, acts] = await Promise.all([api("/api/assistant"), api("/api/actions")]);
     $("#ask-caps").textContent = !cap.enabled ? "Claude bridge is not configured yet (see bridge/README.md)."
-      : cap.can_manage ? "Claude can add, edit and refresh destinations. Removals need your approval below."
-      : "Claude can answer questions but cannot change the tracker (set APP_URL to allow that).";
+      : cap.can_manage ? "Claude can add, edit and refresh destinations and flight searches. Removals need your approval below."
+      : "Claude can answer questions but cannot change the tracker (set APP_BASE_URL to allow that).";
     const pending = $("#ask-pending");
     pending.textContent = "";
     acts.pending.forEach((a) => {
@@ -444,7 +498,7 @@ async function renderAskPanel() {
         });
         return b;
       };
-      row.append(label, decide("approve", "Approve"), decide("reject", "Reject"));
+      row.append(label, decide("approve", "Approve"), decide("reject", "Deny"));
       pending.append(row);
     });
     const recent = $("#ask-recent");

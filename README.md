@@ -47,7 +47,7 @@ No Mongo yet? Use the bundled one:
 docker compose --profile with-mongo up -d --build   # and set MONGO_URI=mongodb://mongo:27017
 ```
 
-Data goes in the `wedding_flights` database, in the collections `quotes`, `plan_history`, `runs` and `actions` (changes Claude made and removals awaiting approval).
+Data goes in the `wedding_flights` database, in the collections `quotes`, `plan_history`, `runs`, `slicktrip_prices` and `actions` (changes Claude made and removals awaiting approval).
 
 ### Deployment
 
@@ -90,20 +90,32 @@ them, with every field, into `user-data/user_destinations.yaml`, which becomes t
 ignored and the file is never modified). After that you and Claude can edit or remove any of them. To undo it, delete the `migrated: true`
 line from that file.
 
-## Ask Claude (Claude Code + Slicktrip MCP)
+## SlickTrip prices
+
+[SlickTrip](https://mcp.slicktrip.com/mcp) is a second price source next to Google Flights, for the exact itineraries in `tracked_searches` in `config.yaml`: round trip, one-way, or multi-city (open-jaw, or 3 legs). Each search has its own `cabin` (default `business`) and `travelers` (default `2`), and codes may be airports or city codes (`TYOA` = Tokyo). The shipped list is the trip plan: DFW⇄DAD and DFW⇄SGN round trips, one-ways each way, DAD→BKK/Tokyo (business and economy), BKK/Tokyo→DFW on 3/20, and two 3-leg multi-city tickets.
+
+SlickTrip needs an OAuth login that lives on the bridge machine, so **the app never calls SlickTrip and holds no SlickTrip credential**. **Refresh SlickTrip prices** (SlickTrip prices tab, `POST /api/slicktrip/refresh`, or Claude's `refresh_prices` tool with `source: slicktrip`) asks Claude through the bridge, one question per search, to run `search_flights` (with `legs` for multi-city) and answer with one strict JSON object. It is on demand only, not part of the 12-hour schedule, because each search is a Claude question (about a minute each, one at a time) and uses your Claude plan. Those questions get SlickTrip only, never the app's tools.
+
+The answer is treated as untrusted text and parsed defensively (`app/slicktrip.py`): it must be a JSON object for the right search, with the same cabin and traveler count, a finite USD `total_usd` between 0 and 250,000, and a total (not per-person) scope. Anything else is stored as `invalid` with the reason and shown in the tab, never as a price. Only `https://*.slicktrip.com` links are kept; a price that moves more than 50% is kept but flagged. Instructions inside an answer are never followed.
+
+Each result is a document in `slicktrip_prices` with timestamp, `source: slicktrip`, `cabin`, `travelers`, `shape`, `legs`, `total_usd` and the SlickTrip `url`, so history accumulates. **Every SlickTrip price is the total for all travelers on that search (both of you), in USD, not per person.** The tab shows the change vs. the previous price (▼ down / ▲ up), a "lowest seen" badge, and the lowest price so far. `GET /api/slicktrip` returns the same data.
+
+Searches in `config.yaml` are read-only. Searches added in the app (or by Claude's `add_destination` tool with `shape` + `legs`) are stored in `user_searches.yaml` next to `user_destinations.yaml` (override with `GUI_SEARCHES_PATH`), up to 20.
+
+## Ask Claude (Claude Code + SlickTrip MCP)
 
 The **Ask Claude** tab sends questions, plus your cheapest tracked trips, to a small bridge on the homelab VM that has Claude Code
-(see [`bridge/README.md`](bridge/README.md)). That VM holds the Slicktrip OAuth login (`https://slicktrip.com/mcp`), so no Slicktrip
-credential lives in this app. Set `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN` in `.env` for chat.
+(see [`bridge/README.md`](bridge/README.md)). That VM holds the SlickTrip OAuth login (`https://mcp.slicktrip.com/mcp`), so no SlickTrip
+credential lives in this app. Set `BRIDGE_URL` and `BRIDGE_TOKEN` in `.env` for chat. Follow-up questions keep their context through the bridge's `session_id` until you click **New chat**. A busy bridge (it handles one question at a time) is retried with backoff; other failures show a specific message (bad token, client not allowed, Claude error, timeout after about 3 minutes). Prompts and tokens are never logged.
 
-Set `APP_URL` (how the bridge reaches this app) and Claude can also **manage the tracker** through the app's own MCP endpoint
-(`POST /mcp`, tools: `list_destinations`, `get_best_trips`, `add_destination`, `update_destination`, `request_remove_destination`,
+Set `APP_BASE_URL` (how the bridge reaches this app) and Claude can also **manage the tracker** through the app's own MCP endpoint
+(`POST /mcp`, streamable HTTP with JSON replies; tools: `list_destinations`, `get_best_trips`, `add_destination`, `update_destination`, `request_remove_destination`,
 `refresh_prices`):
 
 - Adds and edits apply immediately and are logged under **Changes by Claude** in the tab.
-- **Removals never run on Claude's say-so.** They wait there until you click Approve.
-- Claude can only change destinations the app manages (added in the app, or moved in from `config.yaml` as above), up to 30.
-- `/mcp` only accepts a one-question token the app mints when you ask and revokes when the answer returns. The tools and the Ask tab require the login above.
+- **Removals never run on Claude's say-so.** `request_remove_destination` only queues a request; it stays in the tab until you click **Approve** or **Deny**.
+- Claude can only change destinations and flight searches the app manages (added in the app, or destinations moved in from `config.yaml` as above), up to 30 destinations and 20 searches. `config.yaml` flight searches are always read-only.
+- `/mcp` only accepts a one-question token the app mints when you ask and revokes when the answer returns (it also expires after 5 minutes). Tokens are compared in constant time, the token is checked before the body is read, and bodies over 64 KB are refused. The tools and the Ask tab require the login above.
 
 ## Environment variables
 
@@ -115,13 +127,14 @@ Set these in `.env` (see `.env.example`; never commit real values). Defaults are
 | `MONGO_DB` | app | Database name. Default `wedding_flights` |
 | `SERPAPI_KEY` | app | Optional. Enables SerpApi multi-city searches |
 | `APP_PASSWORD_HASH`, `SESSION_SECRET` | app | Optional password login (see [Login](#login)). Without the hash the app is open and the Claude features are off |
-| `CLAUDE_BRIDGE_URL`, `CLAUDE_BRIDGE_TOKEN` | app | Enable the Ask Claude tab (requires login) |
-| `APP_URL` | app | URL the bridge uses to reach this app; enables Claude's `/mcp` tools |
+| `BRIDGE_URL`, `BRIDGE_TOKEN` | app | Enable the Ask Claude tab and SlickTrip prices (requires login). Older names `CLAUDE_BRIDGE_URL`, `CLAUDE_BRIDGE_TOKEN` still work |
+| `APP_BASE_URL` | app | URL the bridge uses to reach this app; enables Claude's `/mcp` tools. Older name `APP_URL` still works |
+| `GUI_SEARCHES_PATH` | app | Where app-added SlickTrip searches are stored. Default `user_searches.yaml` next to the destinations file |
 | `CONFIG_PATH` | app | Path to `config.yaml`. Default `/config/config.yaml` (set in the Dockerfile) |
 | `GUI_DESTINATIONS_PATH` | app | Where GUI-managed destinations are stored. `docker-compose.yml` sets `/data/user_destinations.yaml` |
 | `TAG` | compose | Image tag to build/pull. Default `dev` |
 
-The bridge has its own variables (`BRIDGE_TOKEN`, `BRIDGE_ALLOWED_APP_URL`, …); see [`bridge/README.md`](bridge/README.md).
+The bridge process has its own variables (its `BRIDGE_TOKEN` is the same secret as the app's `BRIDGE_TOKEN`; plus `BRIDGE_ALLOWED_APP_URL`, …); see [`bridge/README.md`](bridge/README.md).
 `docker-compose.yml` also sets `TZ: America/Chicago`.
 
 ## Architecture
@@ -147,7 +160,8 @@ user-data/   ├─► searches.py ─► tracker.py ──────►┤
 | `app/providers/` | `google.py` (fast-flights scrape), `serpapi.py` (multi-city), Google Flights deep-link builder |
 | `app/plans.py` | Combines the latest successful quotes into plan types and picks the cheapest per destination |
 | `app/alerts.py` | ntfy / Discord notifications |
-| `app/auth.py`, `app/assistant.py`, `app/mcp.py`, `app/actions.py` | Password login, bridge client, the `/mcp` tool endpoint, and the log/approval queue for Claude's changes |
+| `app/slicktrip.py` | SlickTrip prices: prompt, defensive JSON parsing, price history, drop/lowest summary, refresh runner |
+| `app/auth.py`, `app/assistant.py`, `app/mcp.py`, `app/actions.py` | Password login, bridge client (retry, errors, tool tokens), the `/mcp` tool endpoint, and the log/approval queue for Claude's changes |
 | `bridge/` | Separate service (not in the app image) that runs `claude -p` for Ask Claude |
 
 `/api/overview` plans carry `hops`, `hop_count`, `hop_label`, `hop_penalty`, `rank_score` and `hop_note`. `tracker.run_flex` (on demand) shares the pricing loop and lock with `run_all`.
@@ -162,7 +176,7 @@ A run: the scheduler (or **Run** in the UI, `POST /api/run`) calls `run_all`. Ea
 - **SerpApi budget:** usage is counted from `quotes` documents with `provider: serpapi` this calendar month against `providers.serpapi_monthly_budget`; extra searches fail with "SerpApi monthly budget used up".
 - **Config edits:** `config.yaml` is mounted from the host; use **Searches → Reload config.yaml** or restart. Invalid YAML or fields fail Pydantic validation.
 - **Locked out / login:** regenerate `APP_PASSWORD_HASH` and `SESSION_SECRET` with `python -m app.auth`, update `.env` and recreate the container. Changing `SESSION_SECRET` signs everyone out.
-- **Ask Claude not working:** the tab needs login plus `CLAUDE_BRIDGE_URL` and `CLAUDE_BRIDGE_TOKEN`; check `curl <bridge>/health` and `bridge/README.md`.
+- **Ask Claude not working:** the tab needs login plus `BRIDGE_URL` and `BRIDGE_TOKEN`; check `curl <bridge>/health` and `bridge/README.md`.
 - **Backups:** state lives in the Mongo database and `user-data/user_destinations.yaml` (plus your `config.yaml`). TODO: no backup or retention policy is defined in the repo.
 
 ## Notes
