@@ -11,7 +11,7 @@ os.environ.setdefault("MONGO_URI", "mongodb://localhost:1")   # collections are 
 import mongomock  # noqa: E402
 import pytest  # noqa: E402
 
-from app import db  # noqa: E402
+from app import assistant, auth, db  # noqa: E402
 from app.config import Config  # noqa: E402
 
 
@@ -22,6 +22,9 @@ def mdb(monkeypatch):
     for name in ("APP_PASSWORD_HASH", "SESSION_SECRET", "APP_URL", "CLAUDE_BRIDGE_URL", "CLAUDE_BRIDGE_TOKEN",
                  "APP_BASE_URL", "BRIDGE_URL", "BRIDGE_TOKEN", "GUI_SEARCHES_PATH"):
         monkeypatch.delenv(name, raising=False)
+    # module-level state must not leak between tests (login throttle, live tools tokens)
+    monkeypatch.setattr(auth, "_failures", {})
+    monkeypatch.setattr(assistant, "_tokens", {})
     client = mongomock.MongoClient(tz_aware=True)
     database = client["wedding_flights_test"]
     monkeypatch.setattr(db, "db", database)
