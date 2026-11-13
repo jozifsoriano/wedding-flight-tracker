@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Wedding Flights</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/style.css?v=4">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 </head>
 <body>
@@ -16,6 +16,7 @@
       <p id="trip-summary" class="muted">Loading…</p>
     </div>
     <div class="run">
+      <label class="check small" title="Hide plans that need a hop flight (e.g. DFW → SGN → DAD)"><input type="checkbox" id="f-nohop"> No-hop only</label>
       <span id="run-status" class="muted small"></span>
       <button id="run-btn" class="btn">Refresh prices</button>
       <button id="logout-btn" class="btn" hidden>Log out</button>

@@ -132,6 +132,18 @@ select {
   border-radius: 8px; padding: 6px 8px; max-width: 100%;
 }
 
+.tag.direct { color: var(--good); }
+.tag.hop { color: var(--warn); }
+.check { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+details.alts { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+details.alts summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+.alts-body { margin-top: 8px; }
+.near-flag { background: var(--surface-2); border-left: 3px solid var(--good); padding: 6px 10px; margin-bottom: 8px; font-size: 13px; }
+table.matrix th, table.matrix td { white-space: nowrap; }
+table.matrix .core-cell { outline: 1px dashed var(--muted); outline-offset: -2px; }
+table.matrix .best-cell { background: var(--surface-2); color: var(--good); box-shadow: inset 0 0 0 2px var(--good); }
+.alt-list { padding-left: 20px; margin: 8px 0; }
+.alt-list li { margin-bottom: 6px; }
 .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 table.data { border-collapse: collapse; width: 100%; font-size: 13px; }
 table.data th, table.data td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }

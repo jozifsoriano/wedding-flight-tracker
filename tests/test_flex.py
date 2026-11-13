@@ -349,6 +349,15 @@ def test_flex_run_endpoint_needs_config_and_priced_plans(client, monkeypatch):
     assert client.post("/api/flex/run", params={"destination_id": "tokyo"}).status_code == 400   # no flex section
 
 
+def test_overview_plans_expose_hop_fields(client):
+    price_all(main.cfg, lambda s: 1000)
+    plans = client.get("/api/overview").json()["plans"]
+    assert plans
+    for pl in plans:
+        assert {"hops", "hop_count", "hop_label", "hop_penalty", "rank_score", "hop_note"} <= pl.keys()
+        assert pl["hop_label"] == "direct" and pl["rank_score"] == pl["total"]
+
+
 def test_scheduled_job_still_uses_run_all_only(monkeypatch):
     monkeypatch.setattr(main.scheduler, "add_job", lambda func, *a, **kw: calls.append(func))
     calls = []
