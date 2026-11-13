@@ -69,6 +69,64 @@ alerts:
   min_drop_pct: 3       # ignore drops smaller than this
   target_total: 0       # also alert whenever any full trip (for 2) is below this; 0 = off
 
+# Itineraries priced through SlickTrip (asked of Claude via the bridge, see README). Prices are totals for all
+# `travelers`. shape: round-trip (outbound + reverse return leg), one-way, or multi-city (2-5 legs, e.g. open-jaw
+# or 3 legs). cabin defaults to business and travelers to 2. Codes may be airports or city codes (TYOA = Tokyo).
+# Searches defined here are read-only for the app and Claude; ones added in the app are stored separately.
+tracked_searches:
+  - id: dfw-dad-rt
+    name: DFW ⇄ Da Nang round trip
+    shape: round-trip
+    legs: [{origin: DFW, destination: DAD, date: "2027-03-05"}, {origin: DAD, destination: DFW, date: "2027-03-19"}]
+  - id: dfw-sgn-rt
+    name: DFW ⇄ Saigon round trip
+    shape: round-trip
+    legs: [{origin: DFW, destination: SGN, date: "2027-03-05"}, {origin: SGN, destination: DFW, date: "2027-03-19"}]
+  - id: dfw-dad-ow
+    name: DFW → Da Nang one-way
+    shape: one-way
+    legs: [{origin: DFW, destination: DAD, date: "2027-03-05"}]
+  - id: dad-dfw-ow
+    name: Da Nang → DFW one-way
+    shape: one-way
+    legs: [{origin: DAD, destination: DFW, date: "2027-03-19"}]
+  - id: dad-bkk-biz
+    name: Da Nang → Bangkok (business)
+    shape: one-way
+    legs: [{origin: DAD, destination: BKK, date: "2027-03-15"}]
+  - id: dad-bkk-eco
+    name: Da Nang → Bangkok (economy)
+    shape: one-way
+    cabin: economy
+    legs: [{origin: DAD, destination: BKK, date: "2027-03-15"}]
+  - id: dad-tokyo-biz
+    name: Da Nang → Tokyo (business)
+    shape: one-way
+    legs: [{origin: DAD, destination: TYOA, date: "2027-03-15"}]
+  - id: dad-tokyo-eco
+    name: Da Nang → Tokyo (economy)
+    shape: one-way
+    cabin: economy
+    legs: [{origin: DAD, destination: TYOA, date: "2027-03-15"}]
+  - id: bkk-dfw-ow
+    name: Bangkok → DFW one-way (3/20)
+    shape: one-way
+    legs: [{origin: BKK, destination: DFW, date: "2027-03-20"}]
+  - id: tokyo-dfw-ow
+    name: Tokyo → DFW one-way (3/20)
+    shape: one-way
+    legs: [{origin: TYOA, destination: DFW, date: "2027-03-20"}]
+  - id: multi-bkk
+    name: DFW → DAD, DAD → Bangkok, Bangkok → DFW
+    shape: multi-city
+    legs: [{origin: DFW, destination: DAD, date: "2027-03-05"}, {origin: DAD, destination: BKK, date: "2027-03-15"},
+           {origin: BKK, destination: DFW, date: "2027-03-20"}]
+  - id: multi-tokyo
+    name: DFW → DAD, DAD → Tokyo, Tokyo → DFW
+    shape: multi-city
+    legs: [{origin: DFW, destination: DAD, date: "2027-03-05"}, {origin: DAD, destination: TYOA, date: "2027-03-15"},
+           {origin: TYOA, destination: DFW, date: "2027-03-20"}]
+
 # Honeymoon ideas. `airports` are what gets priced. `fly_home_from` (optional)
 # is the hub you'd catch the business flight home from in "open jaw" plans;
 # the hop from the honeymoon airport to that hub is priced in economy.
