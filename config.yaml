@@ -28,8 +28,28 @@ dates:
   # then home this many days later.
   home_after_return_days: 1
 
+# Flexible dates. The scheduled job only searches the core `dates` above. These
+# extra dates are priced ON DEMAND ("Search flexible dates" in the dashboard, or
+# POST /api/flex/run?destination_id=...) and only for a destination's best few
+# plans, so they don't add to the 12-hourly search count.
+flex:
+  outbound: ["2027-03-05", "2027-03-06", "2027-03-07"]
+  honeymoon_end: ["2027-03-19", "2027-03-20", "2027-03-21"]
+  # Hard cap: no plan may land back home after this date. Round-trip plans fly
+  # back to Da Nang on honeymoon_end and home_after_return_days later, so 3/21 is
+  # only valid for open-jaw / multi-city plans (which fly home that day).
+  latest_home_arrival: "2027-03-21"
+  top_candidates: 3   # plan shapes (type + gateway + airport) priced per destination
+
+# Plans with hops (SGN -> DAD, PQC -> SGN, ...) are ranked as if they cost a bit
+# more, so they only win when they save more than the penalty. Displayed prices
+# stay the real totals; hop plans remain listed with a "hop saves $X" tag.
+hop_penalty:
+  max_usd: 300      # penalty for a hop outside Vietnam; also the cap for one plan's hops (whole party)
+  vietnam_usd: 100  # penalty per hop entirely inside Vietnam (SGN <-> DAD, PQC <-> SGN)
+
 schedule:
-  interval_hours: 12          # how often to refresh every search
+  interval_hours: 12         # how often to refresh every search
   request_delay_seconds: 8    # pause between Google requests (be polite, avoid blocks)
   run_on_startup: true
 

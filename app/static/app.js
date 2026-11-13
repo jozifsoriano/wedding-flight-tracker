@@ -1,6 +1,9 @@
 let data = null;
 let sparks = {};
 let chart = null;
+let noHop = false;
+const openAlts = new Set();   // destination ids whose Alternatives panel is open (survives re-renders)
+try { noHop = localStorage.getItem("noHop") === "1"; } catch {}
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -44,6 +47,22 @@ function legsList(plan) {
   }).join("")}</ul>`;
 }
 
+function hopTag(p) {
+  if (p.hop_count === 0) return `<span class="tag direct">direct</span>`;
+  const via = p.hops.map((h) => h.role.replace(" hop", "")).join(", ");
+  const note = p.hop_note ? ` · ${esc(p.hop_note)}` : "";
+  return `<span class="tag hop" title="${esc(via)}">${p.hop_count} hop${p.hop_count > 1 ? "s" : ""}${note}</span>`;
+}
+
+// Same itinerary and dates through the other gateway, e.g. one-way business straight to DAD vs via SGN + hop.
+function gatewayCompare(plan) {
+  const same = data.plans.filter((p) => p.total != null && p.type === plan.type && p.destination_id === plan.destination_id &&
+    p.airport === plan.airport && JSON.stringify(p.dates) === JSON.stringify(plan.dates));
+  if (same.length < 2) return "";
+  return `<div class="meta gwcmp">Gateway: ${same.sort((a, b) => a.rank_score - b.rank_score).map((p) =>
+    `${p.hop_count === 0 ? `direct to ${esc(p.gateway)}` : `via ${esc(p.gateway)} + hop`} ${money(p.total)}`).join(" · ")}</div>`;
+}
+
 function planDates(p) {
   const d = p.dates;
   if (p.type === "wedding") return `Leave ${fmtDate(d.outbound)} · home ${fmtDate(d.home)}`;
@@ -82,9 +101,19 @@ function sparkline(points) {
 }
 
 // ---------- best trips ----------
+function bestTrips() {
+  if (!noHop) return { best: data.best_by_destination, trips: data.dashboard_trips };
+  const direct = new Map();
+  data.plans.forEach((p) => {
+    if (p.total != null && p.hop_count === 0 && (!direct.has(p.destination_id) || p.total < direct.get(p.destination_id).total)) direct.set(p.destination_id, p);
+  });
+  const trips = data.dashboard_trips.map((t) => direct.get(t.destination_id) || { ...t, total: null, per_person: null, noDirect: t.total != null });
+  trips.sort((a, b) => (a.total == null) - (b.total == null) || a.total - b.total);
+  return { best: trips.filter((t) => t.total != null), trips };
+}
+
 function renderBest() {
-  const trips = data.dashboard_trips;
-  const best = data.best_by_destination;
+  const { best, trips } = bestTrips();
   const top = best.find((p) => p.type !== "wedding");
   const wedding = best.find((p) => p.type === "wedding");
   $("#hero").innerHTML = top ? `
@@ -99,14 +128,59 @@ function renderBest() {
   $("#best-grid").innerHTML = trips.map((p) => `
     <article class="card">
       <div class="card-head">
-        <div><h3>${esc(p.destination)}</h3><div class="meta">${p.total == null ? "Tracking · awaiting prices" : `${esc(p.type_label)} · via ${esc(p.gateway)}${p.airport ? " · " + esc(p.airport) : ""}`}</div></div>
+        <div><h3>${esc(p.destination)}</h3><div class="meta">${p.total == null ? (p.noDirect ? "Every plan needs a hop flight" : "Tracking · awaiting prices") : `${esc(p.type_label)} · via ${esc(p.gateway)}${p.airport ? " · " + esc(p.airport) : ""} ${hopTag(p)}`}</div></div>
         <div style="text-align:right"><div class="price">${money(p.total)}</div><div class="meta">${p.total == null ? "estimate pending" : `${money(p.per_person)} pp`}</div></div>
       </div>
       ${p.total != null ? `<div class="meta">${planDates(p)}</div>` : ""}
+      ${p.total != null ? gatewayCompare(p) : ""}
       ${comparisonNote(p) ? `<div class="meta">${esc(comparisonNote(p))}</div>` : ""}
       ${sparkline(sparks[p.destination_id])}
       ${legsList(p)}
+      <details class="alts" data-dest="${esc(p.destination_id)}"${openAlts.has(p.destination_id) ? " open" : ""}>
+        <summary>Alternatives &amp; flexible dates</summary><div class="alts-body muted small">Loading…</div>
+      </details>
     </article>`).join("") || "";
+  document.querySelectorAll("#best-grid details.alts").forEach((el) => {
+    el.addEventListener("toggle", () => {
+      if (el.open) { openAlts.add(el.dataset.dest); renderAlts(el); } else openAlts.delete(el.dataset.dest);
+    });
+    if (el.open) renderAlts(el);
+  });
+}
+
+// ---------- alternatives / flexible dates ----------
+async function renderAlts(el) {
+  const id = el.dataset.dest, body = el.querySelector(".alts-body");
+  let a;
+  try { a = await api(`/api/alternatives?destination_id=${encodeURIComponent(id)}`); }
+  catch (e) { body.textContent = e.message; return; }
+  const m = a.matrix, f = a.flex;
+  const hasPrices = a.priced > 0;
+  const cell = (c) => c == null ? `<td class="num muted">—</td>` : `<td class="num${c.best ? " best-cell" : ""}${c.core ? " core-cell" : ""}"
+    title="${esc(c.type_label)} via ${esc(c.gateway)}${c.airport ? " · " + esc(c.airport) : ""} · home ${esc(fmtDate(c.home))}${c.hop_count ? " · " + c.hop_count + " hop" : ""}">
+    <b>${money(c.total)}</b><div class="small muted">${esc(c.type.replace("_", " "))}${c.hop_count ? " · hop" : ""}</div></td>`;
+  const near = a.near_dates;
+  const when = f.last_run ? `Last flexible search ${fmtWhen(f.last_run.finished_at || f.last_run.started_at)} · ${f.last_run.ok} ok, ${f.last_run.errors} failed` : "Flexible dates not searched yet";
+  const running = f.running || (data.status.running && data.status.mode === "flex");
+  body.classList.remove("muted", "small");
+  body.innerHTML = `
+    ${near.flag ? `<div class="near-flag">A cheaper plan exists within ±1 day of your dates: ${money(near.near_best.total)} (leave ${fmtDate(near.near_best.dates.outbound)}, honeymoon ends ${fmtDate(near.near_best.dates.honeymoon_end || near.near_best.dates.home)}) — saves ${money(near.savings)}.</div>` : ""}
+    ${hasPrices ? `<div class="table-wrap"><table class="data matrix">
+      <thead><tr><th>Leave DFW ↓ / leave honeymoon →</th>${m.ends.map((e) => `<th class="num${m.core_ends.includes(e) ? " core-cell" : ""}">${fmtDate(e)}</th>`).join("")}</tr></thead>
+      <tbody>${m.rows.map((r) => `<tr><th${r.core ? ` class="core-cell"` : ""}>${fmtDate(r.outbound)}</th>${r.cells.map(cell).join("")}</tr>`).join("")}</tbody></table></div>
+      <p class="muted small">Cheapest total for ${data.trip.adults} per date pair (highlighted = best overall, outlined = your core dates). Home by ${esc(fmtDate(f.latest_home_arrival))} at the latest. — means not priced yet.</p>
+      <ol class="alt-list">${a.top.map((t) => `<li><b>${money(t.total)}</b> ${t.delta ? `<span class="muted">(+${money(t.delta)})</span>` : `<span class="tag direct">cheapest</span>`}
+        ${esc(t.type_label)} via ${esc(t.gateway)}${t.airport ? " · " + esc(t.airport) : ""} ${hopTag(t)}
+        <div class="muted small">Leave ${fmtDate(t.dates.outbound)} · ${t.dates.honeymoon_end ? `honeymoon ends ${fmtDate(t.dates.honeymoon_end)} · ` : ""}home ${fmtDate(t.dates.home || t.dates.honeymoon_end)}${t.core ? " · core dates" : ""}</div></li>`).join("")}</ol>` : `<p class="muted small">No priced plans yet.</p>`}
+    <div class="form-actions"><button class="btn flex-btn" type="button"${running || !f.enabled ? " disabled" : ""}>Search flexible dates</button>
+      <span class="muted small flex-status">${f.enabled ? (running ? `Searching… ${data.status.progress + 1}/${data.status.total}` : esc(when)) : "Add a flex section to config.yaml to enable this."}</span></div>
+    ${f.enabled ? `<p class="muted small">Prices ${f.outbound.map(fmtDate).join(" / ")} out and ${f.honeymoon_end.map(fmtDate).join(" / ")} back for this destination's ${f.top_candidates} cheapest plans. Uses extra searches (SerpApi budget counts); not part of the scheduled refresh.</p>` : ""}`;
+  body.querySelector(".flex-btn").onclick = async () => {
+    const status = body.querySelector(".flex-status");
+    try { await api(`/api/flex/run?destination_id=${encodeURIComponent(id)}`, { method: "POST" }); status.textContent = "Started…"; }
+    catch (e) { status.textContent = e.message; return; }
+    load();
+  };
 }
 
 // ---------- all plans ----------
@@ -122,18 +196,24 @@ function renderPlans() {
   fillSelect($("#f-type"), Object.entries(data.plan_types), true);
   fillSelect($("#f-gw"), data.trip.gateways.map((g) => [g, g]), true);
   const fd = $("#f-dest").value, ft = $("#f-type").value, fg = $("#f-gw").value, fc = $("#f-complete").checked;
-  const rows = data.plans.filter((p) => (!fd || p.destination_id === fd) && (!ft || p.type === ft) && (!fg || p.gateway === fg) && (!fc || p.total != null));
+  const rows = data.plans.filter((p) => (!fd || p.destination_id === fd) && (!ft || p.type === ft) && (!fg || p.gateway === fg) && (!fc || p.total != null) && (!noHop || p.hop_count === 0));
   $("#plans-table").innerHTML = `
     <thead><tr><th>Destination</th><th>Plan</th><th>Gateway</th><th>Dates</th><th class="num">Total for ${data.trip.adults}</th><th class="num">Per person</th><th>Breakdown</th></tr></thead>
     <tbody>${rows.slice(0, 400).map((p) => `<tr>
       <td>${esc(p.destination)}${p.airport ? ` <span class="tag">${esc(p.airport)}</span>` : ""}</td>
       <td>${esc(p.type_label)}${comparisonNote(p) ? `<div class="muted small">${esc(comparisonNote(p))}</div>` : ""}</td>
-      <td>${esc(p.gateway)}</td><td>${planDates(p)}</td>
+      <td>${esc(p.gateway)} ${hopTag(p)}</td><td>${planDates(p)}</td>
       <td class="num"><b>${money(p.total)}</b></td><td class="num">${money(p.per_person)}</td>
       <td><details><summary>${p.components.length} flights</summary>${legsList(p)}</details></td>
     </tr>`).join("") || `<tr><td colspan="7" class="muted">No plans match.</td></tr>`}</tbody>`;
 }
 ["#f-dest", "#f-type", "#f-gw", "#f-complete"].forEach((s) => $(s).addEventListener("change", renderPlans));
+$("#f-nohop").checked = noHop;
+$("#f-nohop").addEventListener("change", (e) => {
+  noHop = e.target.checked;
+  try { localStorage.setItem("noHop", noHop ? "1" : "0"); } catch {}
+  if (data) { renderBest(); renderPlans(); }
+});
 
 // ---------- history ----------
 const SERIES = { rt_side: "--series-1", open_jaw: "--series-2", multicity: "--series-3", wedding: "--series-1" };
@@ -281,7 +361,7 @@ function renderHeader() {
   $("#trip-summary").textContent = `${t.adults} travelers · ${t.home} → ${t.wedding_city} · ${t.cabins.long_haul} long-haul, ${t.cabins.regional} regional · leaving ${t.dates.outbound.map(fmtDate).join(" / ")}`;
   $("#run-btn").disabled = s.running;
   $("#run-status").textContent = s.running
-    ? `Refreshing ${s.progress + 1}/${s.total}: ${s.current || ""}`
+    ? `${s.mode === "flex" ? "Searching flexible dates" : "Refreshing"} ${s.progress + 1}/${s.total}: ${s.current || ""}`
     : `Updated ${fmtWhen(s.last_run?.finished_at || s.last_run?.started_at)}`;
 }
 

@@ -46,6 +46,22 @@ class Alerts(BaseModel):
     target_total: float = 0
 
 
+class HopPenalty(BaseModel):
+    max_usd: float = 300       # most a plan's hops can cost in ranking, total for the party
+    vietnam_usd: float = 100   # penalty for a hop entirely inside Vietnam (SGN <-> DAD, PQC <-> SGN)
+
+
+class Flex(BaseModel):
+    outbound: List[str] = []
+    honeymoon_end: List[str] = []
+    latest_home_arrival: Optional[str] = None   # hard cap: no plan lands back home after this date
+    top_candidates: int = 3                     # plan shapes per destination priced by the flex search
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.outbound or self.honeymoon_end)
+
+
 class Destination(BaseModel):
     id: str
     name: str
@@ -74,6 +90,8 @@ class Config(BaseModel):
     schedule: Schedule = Field(default_factory=Schedule)
     providers: Providers = Field(default_factory=Providers)
     alerts: Alerts = Field(default_factory=Alerts)
+    hop_penalty: HopPenalty = Field(default_factory=HopPenalty)
+    flex: Flex = Field(default_factory=Flex)
     honeymoon: List[Destination] = []
 
     @property
