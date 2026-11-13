@@ -17,11 +17,12 @@ Hops (gateway connectors, the home hop to a fly_home_from hub, fly_out_via hops)
 `total` is always the real price; `rank_score` adds a hop penalty (config hop_penalty) so a plan with hops
 only outranks a comparable no-hop plan when it is cheaper by more than the penalty.
 """
+from datetime import date
 from itertools import product
 from typing import Dict, List, Optional
 
 from .config import Config, Dates
-from .searches import Leg, Search, flex_dates, home_ok, one_way, round_trip, shift
+from .searches import Leg, Search, home_ok, one_way, round_trip, shift
 
 PLAN_TYPES = {
     "rt_side": "Round trip + side trip",
@@ -230,4 +231,88 @@ def best_by(plans: List[dict], *fields: str) -> Dict[tuple, dict]:
 
 
 def cheapest(plans: List[dict]) -> Optional[dict]:
+    """First priced plan; plans from compute_plans are sorted by rank_score, so this is the best-ranked one."""
     return next((pl for pl in plans if pl["total"] is not None), None)
+
+
+# --- flexible dates ------------------------------------------------------------------------------
+
+def flex_candidates(cfg: Config, plans: List[dict], destination_id: str) -> List[dict]:
+    """The cheapest few plan shapes (type + gateway + airport) for a destination, from plans priced on the
+    core dates and already sorted by rank_score. Only these get the flex-date grid."""
+    out, seen = [], set()
+    for pl in plans:
+        shape = (pl["type"], pl["gateway"], pl["airport"])
+        if pl["destination_id"] != destination_id or pl["total"] is None or shape in seen:
+            continue
+        seen.add(shape)
+        out.append(pl)
+        if len(out) >= cfg.flex.top_candidates:
+            break
+    return out
+
+
+def _slim(pl: dict, core: bool, best_total: Optional[int] = None) -> dict:
+    return {
+        "id": pl["id"], "type": pl["type"], "type_label": pl["type_label"], "gateway": pl["gateway"],
+        "airport": pl["airport"], "dates": pl["dates"], "total": pl["total"], "per_person": pl["per_person"],
+        "rank_score": pl["rank_score"], "hop_count": pl["hop_count"], "hop_label": pl["hop_label"],
+        "hop_note": pl["hop_note"], "core": core,
+        **({"delta": pl["total"] - best_total} if best_total is not None else {}),
+    }
+
+
+def alternatives(cfg: Config, plans: List[dict], destination_id: str) -> dict:
+    """Date matrix, top-5 alternatives and the near-dates flag for one destination.
+    `plans` come from compute_plans(cfg, latest, dates=flex_dates(cfg)), so unpriced dates are just null."""
+    dest = next((x for x in cfg.honeymoon if x.id == destination_id), None)
+    core_out = set(cfg.dates.outbound)
+    core_end = set(dest.end_dates if dest and dest.end_dates else cfg.dates.honeymoon_end)
+    mine = [pl for pl in plans if pl["destination_id"] == destination_id]
+    priced = [pl for pl in mine if pl["total"] is not None]   # already sorted by rank_score
+
+    def is_core(pl):
+        return pl["dates"]["outbound"] in core_out and plan_end_date(cfg, pl) in core_end
+
+    def within_a_day(day, core):
+        return any(abs((date.fromisoformat(day) - date.fromisoformat(c)).days) <= 1 for c in core)
+
+    def near_core(pl):
+        return within_a_day(pl["dates"]["outbound"], core_out) and within_a_day(plan_end_date(cfg, pl), core_end)
+
+    outbound = sorted({pl["dates"]["outbound"] for pl in mine})
+    ends = sorted({plan_end_date(cfg, pl) for pl in mine})
+    cell_for: Dict[tuple, dict] = {}
+    for pl in priced:
+        cell_for.setdefault((pl["dates"]["outbound"], plan_end_date(cfg, pl)), pl)
+    best = priced[0] if priced else None
+    rows = []
+    for out_day in outbound:
+        cells = []
+        for end in ends:
+            pl = cell_for.get((out_day, end))
+            cells.append(pl and {
+                "total": pl["total"], "type": pl["type"], "type_label": pl["type_label"],
+                "gateway": pl["gateway"], "airport": pl["airport"], "home": pl["dates"].get("home") or end,
+                "hop_count": pl["hop_count"], "plan_id": pl["id"], "core": is_core(pl),
+                "best": pl is best,
+            })
+        rows.append({"outbound": out_day, "core": out_day in core_out, "cells": cells})
+
+    core_best = next((pl for pl in priced if is_core(pl)), None)
+    near_best = next((pl for pl in priced if not is_core(pl) and near_core(pl)), None)
+    flag = bool(core_best and near_best and near_best["rank_score"] < core_best["rank_score"]
+                and near_best["total"] < core_best["total"])
+    return {
+        "destination_id": destination_id,
+        "matrix": {"outbound": outbound, "ends": ends, "core_outbound": sorted(core_out),
+                   "core_ends": sorted(core_end), "rows": rows},
+        "top": [_slim(pl, is_core(pl), best["total"]) for pl in priced[:5]],
+        "near_dates": {
+            "flag": flag,
+            "core_best": core_best and _slim(core_best, True),
+            "near_best": near_best and _slim(near_best, False),
+            "savings": core_best["total"] - near_best["total"] if flag else 0,
+        },
+        "priced": len(priced), "plans": len(mine),
+    }

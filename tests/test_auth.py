@@ -32,6 +32,8 @@ def test_open_when_no_password_configured(client):
 def test_everything_needs_a_session_once_enabled(client, secured):
     assert client.get("/api/overview").status_code == 401
     assert client.post("/api/run").status_code == 401
+    assert client.post("/api/flex/run?destination_id=tokyo").status_code == 401
+    assert client.get("/api/alternatives?destination_id=tokyo").status_code == 401
     assert client.post("/api/actions/x/approve").status_code == 401
     assert client.get("/static/app.js").status_code == 401
     assert client.get("/").text.count("login-form") == 1           # sign-in page at the same URL

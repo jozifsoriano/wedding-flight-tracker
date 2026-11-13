@@ -16,8 +16,8 @@ from pydantic import BaseModel, Field, ValidationError, field_validator, model_v
 
 from . import actions, assistant, auth, db, mcp, tracker
 from .config import CONFIG_PATH, Config, gui_destinations_path, load_config, read_store
-from .plans import PLAN_TYPES, best_by, compute_plans
-from .searches import build_searches
+from .plans import PLAN_TYPES, alternatives, best_by, compute_plans
+from .searches import build_searches, flex_dates
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 STATIC = Path(__file__).parent / "static"
@@ -145,7 +145,7 @@ def index():
 def overview():
     searches = build_searches(cfg)
     plans = compute_plans(cfg, db.latest_quotes({s.key for s in searches}))
-    last_run = db.runs.find_one(sort=[("started_at", -1)])
+    last_run = db.runs.find_one({"kind": {"$ne": "flex"}}, sort=[("started_at", -1)])
     job = scheduler.get_job("refresh")
     best_dest = sorted(best_by(plans, "destination_id").values(), key=lambda p: p["rank_score"])
     dashboard_trips = list(best_dest)
@@ -256,6 +256,50 @@ def _start_refresh() -> dict:
         raise HTTPException(409, "A refresh is already running")
     threading.Thread(target=tracker.run_all, args=(cfg,), daemon=True).start()
     return {"started": True}
+
+
+def _known_destination(destination_id: str) -> None:
+    if destination_id != "wedding-only" and not any(d.id == destination_id for d in cfg.honeymoon):
+        raise HTTPException(404, f"Unknown destination '{destination_id}'")
+
+
+@app.post("/api/flex/run")
+def run_flex(destination_id: str):
+    """On-demand flexible-date search: prices the flex grid for the destination's best few plans.
+    Never part of the scheduled refresh."""
+    _known_destination(destination_id)
+    if not cfg.flex.enabled:
+        raise HTTPException(400, "No flex dates configured (see the flex section of config.yaml)")
+    if tracker.state["running"]:
+        raise HTTPException(409, "A refresh is already running")
+    if not tracker.flex_searches(cfg, destination_id):
+        raise HTTPException(422, "Nothing to search: no priced plan for this destination yet "
+                                 "(run Refresh prices first) or its flex dates were priced recently")
+    threading.Thread(target=tracker.run_flex, args=(cfg, destination_id), daemon=True).start()
+    return {"started": True}
+
+
+@app.get("/api/alternatives")
+def get_alternatives(destination_id: str):
+    """Date matrix, top-5 alternatives and the near-dates flag, from the latest quotes over the flex dates."""
+    _known_destination(destination_id)
+    fd = flex_dates(cfg)
+    keys = {s.key for s in build_searches(cfg, dates=fd)} | {s.key for s in build_searches(cfg)}
+    plans = compute_plans(cfg, db.latest_quotes(keys), dates=fd)
+    last = db.runs.find_one({"kind": "flex", "destination_id": destination_id}, sort=[("started_at", -1)])
+    return {
+        **alternatives(cfg, plans, destination_id),
+        "flex": {
+            "enabled": cfg.flex.enabled,
+            "outbound": fd.outbound, "honeymoon_end": fd.honeymoon_end,
+            "latest_home_arrival": cfg.flex.latest_home_arrival, "top_candidates": cfg.flex.top_candidates,
+            "running": bool(tracker.state["running"] and tracker.state.get("mode") == "flex"),
+            "last_run": last and {
+                "started_at": _iso(last["started_at"]), "finished_at": _iso(last.get("finished_at")),
+                "ok": last["ok"], "errors": last["errors"], "searches": last["searches"],
+            },
+        },
+    }
 
 
 @app.post("/api/destinations", status_code=201)
