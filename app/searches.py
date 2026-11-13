@@ -1,9 +1,9 @@
 """Turns the config into the concrete list of flight searches to price."""
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
-from .config import Config
+from .config import Config, Dates
 
 
 @dataclass(frozen=True)
@@ -59,8 +59,25 @@ def round_trip(kind, cabin, provider, o, d, out_day, back_day) -> Search:
     return Search(kind, "round-trip", cabin, (Leg(o, d, out_day), Leg(d, o, back_day)), provider)
 
 
-def build_searches(cfg: Config) -> List[Search]:
+def home_ok(cfg: Config, day: str) -> bool:
+    """False when landing back home on `day` would be after flex.latest_home_arrival."""
+    cap = cfg.flex.latest_home_arrival
+    return not cap or day <= cap
+
+
+def flex_dates(cfg: Config) -> Dates:
+    """Core dates plus the flex options (de-duplicated, sorted); honeymoon starts stay as configured."""
     d = cfg.dates
+    return d.model_copy(update={
+        "outbound": sorted({*d.outbound, *cfg.flex.outbound}),
+        "honeymoon_end": sorted({*d.honeymoon_end, *cfg.flex.honeymoon_end}),
+    })
+
+
+def build_searches(cfg: Config, dates: Optional[Dates] = None) -> List[Search]:
+    """Every search to price. `dates` overrides cfg.dates (used for the flex grid); with an override
+    the destinations' own end_dates are replaced by dates.honeymoon_end."""
+    d = dates or cfg.dates
     home, city = cfg.home, cfg.wedding_city
     lh, rg = cfg.cabins.long_haul, cfg.cabins.regional
     p = cfg.providers.default
@@ -74,17 +91,19 @@ def build_searches(cfg: Config) -> List[Search]:
             round_trip_ends = set(d.honeymoon_end)
             round_trip_ends.update(
                 he for dest in cfg.honeymoon if not dest.extended_stay
-                for he in (dest.end_dates or d.honeymoon_end)
+                for he in (d.honeymoon_end if dates else dest.end_dates or d.honeymoon_end)
             )
             for he in sorted(round_trip_ends):
                 back = shift(he, d.home_after_return_days)
+                if not home_ok(cfg, back):
+                    continue
                 out.append(round_trip("longhaul_rt", lh, p, home, g, out_day, back))
                 if g != city:
                     out.append(one_way("connector", rg, p, city, g, back))
 
     for dest in cfg.honeymoon:
         start_dates = dest.start_dates or d.honeymoon_start
-        end_dates = dest.end_dates or d.honeymoon_end
+        end_dates = d.honeymoon_end if dates else dest.end_dates or d.honeymoon_end
         for ap in dest.airports:
             start = dest.fly_out_via or city
             hub = dest.fly_home_from or ap
@@ -94,11 +113,15 @@ def build_searches(cfg: Config) -> List[Search]:
                     out.append(one_way("connector", rg, p, city, start, hs))
                 if not dest.extended_stay:
                     for he in end_dates:
+                        if not home_ok(cfg, shift(he, d.home_after_return_days)):
+                            continue   # round-trip plans fly back to Da Nang first, so they land home later
                         out.append(round_trip("honeymoon_rt", rg, p, start, ap, hs, he))
                         out.append(one_way("honeymoon_back", rg, p, ap, start, he))
                         if start != city:
                             out.append(one_way("connector", rg, p, start, city, he))
             for he in end_dates:
+                if not home_ok(cfg, he):
+                    continue
                 out.append(one_way("longhaul_home", lh, p, hub, home, he))
                 if hub != ap:
                     out.append(one_way("home_hop", rg, p, ap, hub, he))

@@ -147,7 +147,7 @@ def overview():
     plans = compute_plans(cfg, db.latest_quotes({s.key for s in searches}))
     last_run = db.runs.find_one(sort=[("started_at", -1)])
     job = scheduler.get_job("refresh")
-    best_dest = sorted(best_by(plans, "destination_id").values(), key=lambda p: p["total"])
+    best_dest = sorted(best_by(plans, "destination_id").values(), key=lambda p: p["rank_score"])
     dashboard_trips = list(best_dest)
     priced_destinations = {plan["destination_id"] for plan in best_dest}
     for destination in cfg.honeymoon:
@@ -156,7 +156,7 @@ def overview():
         placeholder = next((plan for plan in plans if plan["destination_id"] == destination.id), None)
         if placeholder:
             dashboard_trips.append(placeholder)
-    dashboard_trips.sort(key=lambda p: (p["total"] is None, p["total"] or 0))
+    dashboard_trips.sort(key=lambda p: (p["rank_score"] is None, p["rank_score"] or 0))
     return {
         "trip": {
             "home": cfg.home, "wedding_city": cfg.wedding_city, "gateways": cfg.gateways,
@@ -230,7 +230,7 @@ class AskRequest(BaseModel):
 
 def _best_trips() -> list[dict]:
     plans = compute_plans(cfg, db.latest_quotes({s.key for s in build_searches(cfg)}))
-    return sorted(best_by(plans, "destination_id").values(), key=lambda p: p["total"])
+    return sorted(best_by(plans, "destination_id").values(), key=lambda p: p["rank_score"])
 
 
 @app.get("/api/assistant")
