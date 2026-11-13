@@ -14,8 +14,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
-from . import actions, assistant, auth, db, mcp, tracker
-from .config import CONFIG_PATH, Config, gui_destinations_path, load_config, read_store
+from . import actions, assistant, auth, db, mcp, slicktrip, tracker
+from .config import (CONFIG_PATH, Config, TrackedSearch, gui_destinations_path, gui_searches_path, load_config,
+                     read_search_store, read_store)
 from .plans import PLAN_TYPES, alternatives, best_by, compute_plans
 from .searches import build_searches, flex_dates
 
@@ -258,6 +259,34 @@ def _start_refresh() -> dict:
     return {"started": True}
 
 
+def _start_slicktrip_refresh(search_ids: list[str] | None = None) -> dict:
+    if not assistant.enabled():
+        raise HTTPException(503, "SlickTrip prices need the Claude bridge: log in (APP_PASSWORD_HASH) and set BRIDGE_URL and BRIDGE_TOKEN")
+    if slicktrip.state["running"]:
+        raise HTTPException(409, "A SlickTrip refresh is already running")
+    unknown = set(search_ids or []) - {t.id for t in cfg.tracked_searches}
+    if unknown:
+        raise HTTPException(404, f"Unknown search: {', '.join(sorted(unknown))}")
+    slicktrip.state["running"] = True   # set now so a second click can't race the thread start
+    threading.Thread(target=slicktrip.refresh, args=(cfg, search_ids), daemon=True).start()
+    return {"started": True}
+
+
+@app.get("/api/slicktrip")
+def slicktrip_prices():
+    """Latest SlickTrip price per tracked search with the change vs. the previous price and the lowest seen.
+    Every price is a total for all travelers on that search, in USD."""
+    app_ids = {d["id"] for d in _gui_searches()}
+    return {"enabled": assistant.enabled(), "running": dict(slicktrip.state), "currency": "USD",
+            "price_scope": "total",
+            "searches": [{**slicktrip.summarize(t), "editable": t.id in app_ids} for t in cfg.tracked_searches]}
+
+
+@app.post("/api/slicktrip/refresh")
+def slicktrip_refresh(search_id: str | None = None):
+    return _start_slicktrip_refresh([search_id] if search_id else None)
+
+
 def _known_destination(destination_id: str) -> None:
     if destination_id != "wedding-only" and not any(d.id == destination_id for d in cfg.honeymoon):
         raise HTTPException(404, f"Unknown destination '{destination_id}'")
@@ -354,6 +383,13 @@ def _read_store() -> tuple[list[dict], bool]:
 
 def _gui_destinations() -> list[dict]:
     return _read_store()[0]
+
+
+def _gui_searches() -> list[dict]:
+    try:
+        return read_search_store(gui_searches_path(CONFIG_PATH))
+    except ValueError as e:
+        raise HTTPException(500, str(e)) from e
 
 
 def _add_destination(request: AddDestinationRequest) -> dict:

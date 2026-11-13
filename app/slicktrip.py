@@ -2,19 +2,28 @@
 so the model's text is untrusted: it is parsed defensively and nothing in it is ever followed or executed."""
 import json
 import math
+import logging
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from . import db
-from .config import TrackedSearch
+from . import assistant, db
+from .config import Config, TrackedSearch
+
+log = logging.getLogger(__name__)
 
 SOURCE = "slicktrip"
 MAX_TOTAL_USD = 250_000          # for the whole party; anything above is a parse/units error, not a fare
 LARGE_CHANGE_PCT = 50            # flag (but keep) a price that moved more than this vs. the previous one
 MAX_ANSWER_CHARS = 20_000
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+_run_lock = threading.Lock()
+state = {"running": False, "progress": 0, "total": 0, "current": None, "last_error": None}
+QUEUE_WAIT = 600   # seconds a refresh may queue behind an interactive question on the single-slot bridge
 
 
 class PriceParseError(ValueError):
@@ -154,3 +163,36 @@ def summarize(s: TrackedSearch, history_limit: int = 60) -> dict:
                    change_pct=round(change / prev["total_usd"] * 100, 1),
                    trend="down" if change < 0 else "up" if change > 0 else "flat")
     return out
+
+
+def refresh(cfg: Config, search_ids: list[str] | None = None) -> dict | None:
+    """Ask Claude (via the bridge, SlickTrip tools only) to price each tracked search, one question per search.
+    Returns {"ok", "errors"}, or None if a refresh is already running. A bridge setup error stops the run."""
+    if not _run_lock.acquire(blocking=False):
+        return None
+    try:
+        searches = [t for t in cfg.tracked_searches if search_ids is None or t.id in search_ids]
+        state.update(running=True, progress=0, total=len(searches), current=None, last_error=None)
+        ok = errors = 0
+        for i, s in enumerate(searches):
+            state.update(progress=i, current=s.name)
+            try:
+                reply = assistant.request(build_prompt(s), wait=QUEUE_WAIT)
+            except assistant.AssistantError as e:
+                store(s, "error", error=str(e))
+                errors += 1
+                state["last_error"] = str(e)
+                if e.fatal:
+                    errors += len(searches) - i - 1
+                    break
+                continue
+            doc = record_answer(s, reply["answer"])
+            if doc["status"] == "ok":
+                ok += 1
+            else:
+                errors += doc["status"] != "no_fares"
+        log.info("slicktrip refresh done: %d priced, %d problems of %d searches", ok, errors, len(searches))
+        return {"ok": ok, "errors": errors}
+    finally:
+        state.update(running=False, current=None)
+        _run_lock.release()
