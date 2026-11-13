@@ -19,6 +19,18 @@ For extended stays, the **All plans** tab compares separate DFW→wedding-city a
 
 All prices are **totals for both travelers** (that's what Google Flights returns when you search for 2 adults). The dashboard also shows the per-person price.
 
+### Avoiding hops
+
+Every plan records its `hops` (the gateway hop, e.g. SGN→DAD; the hop from a honeymoon island to a `fly_home_from` hub; `fly_out_via` hops), a `hop_count`, and a `hop_label` of `direct` or `hop`. `total` is always the real price. To keep the trip simple, each hop plan also gets a `rank_score = total + penalty`, and plans are sorted and the "best" trip is picked by `rank_score`. A hop within Vietnam (SGN↔DAD, PQC↔SGN) adds `hop_penalty.vietnam_usd`, any other hop adds `hop_penalty.max_usd`; a plan's total penalty is capped at `max_usd`. So a hop plan only outranks the comparable no-hop plan when it is cheaper by **more** than the penalty (ties go to no-hop). Hop plans stay listed with a "hop saves $X" / "hop costs $X more" tag against the same itinerary and dates without the hop (for example, one-way business straight to DAD vs. via SGN). The dashboard has a **No-hop only** toggle (client-side, `hop_count == 0`).
+
+### Flexible dates
+
+The scheduled job only searches the core `dates`, so its search count doesn't change. The wider grid is on demand: **Alternatives & flexible dates → Search flexible dates** on a destination's card in the dashboard, or `POST /api/flex/run?destination_id=<id>`. It takes the destination's `flex.top_candidates` cheapest plan shapes (type + gateway + airport) from the latest core-date prices and prices them over `flex.outbound` × `flex.honeymoon_end` (keeping that plan's honeymoon start). It runs in a background thread like `/api/run` (one run at a time, `409` if busy; `422` if nothing is priced yet or the grid was priced within the last `schedule.interval_hours`), waits `request_delay_seconds` between Google requests, counts against `providers.serpapi_monthly_budget`, and stores quotes like any other run. It does not touch plan history or alerts. Searches already priced within the refresh interval are skipped.
+
+`flex.latest_home_arrival` is enforced everywhere. Round-trip plans fly back to Da Nang on `honeymoon_end` and home `home_after_return_days` later, so with the shipped config a 3/21 `honeymoon_end` only exists for open-jaw and multi-city plans (which fly home that day). Arrival is compared by calendar date; an overnight flight that lands the next day is not accounted for.
+
+`GET /api/alternatives?destination_id=<id>` (use `wedding-only` for the baseline) returns, from the latest quotes over the core and flex dates: a date `matrix` (outbound × honeymoon end, cheapest total and plan type per cell, `null` if unpriced), the `top` 5 plans with `delta` vs. the best, a `near_dates` flag (a cheaper plan exists within ±1 day of your core dates, with the savings), and the last flex run. Both endpoints sit behind the login like `/api/run`.
+
 ## Run it on the homelab
 
 ```bash
@@ -52,6 +64,8 @@ TAG=latest docker compose pull flight-tracker && TAG=latest docker compose up -d
 - **`cabins`**: `long_haul: business`, `regional: economy`.
 - **`honeymoon[].fly_home_from`**: island airports such as PQC, MPH, PPS and USM have no business fares to DFW. For those, open-jaw plans add an economy hop to a hub (SGN/MNL/BKK) and fly business home from there.
 - **`honeymoon[].fly_out_via`**: Google can't price Da Nang→Malé as one ticket, so the Maldives is priced via SGN.
+- **`flex`**: flexible dates, priced **on demand only** (see [Flexible dates](#flexible-dates)). `outbound` and `honeymoon_end` list the extra dates to try; `latest_home_arrival` is a hard cap on the date any plan lands back in DFW; `top_candidates` (default 3) is how many of a destination's cheapest plan shapes get the full grid. Leave `outbound`/`honeymoon_end` empty to turn it off.
+- **`hop_penalty`**: `max_usd` (default 300) and `vietnam_usd` (default 100), totals for the whole party. See [Avoiding hops](#avoiding-hops).
 - **`alerts`**: set `ntfy_url` and/or `discord_webhook` to get a push when a destination hits a new low (`min_drop_pct`), or when any full trip drops under `target_total`.
 
 After editing `config.yaml`, click **Searches → Reload config.yaml** in the UI. GUI-added destinations are saved separately and reloaded immediately. Schedule changes take effect from the next run.
@@ -135,6 +149,8 @@ user-data/   ├─► searches.py ─► tracker.py ──────►┤
 | `app/alerts.py` | ntfy / Discord notifications |
 | `app/auth.py`, `app/assistant.py`, `app/mcp.py`, `app/actions.py` | Password login, bridge client, the `/mcp` tool endpoint, and the log/approval queue for Claude's changes |
 | `bridge/` | Separate service (not in the app image) that runs `claude -p` for Ask Claude |
+
+`/api/overview` plans carry `hops`, `hop_count`, `hop_label`, `hop_penalty`, `rank_score` and `hop_note`. `tracker.run_flex` (on demand) shares the pricing loop and lock with `run_all`.
 
 A run: the scheduler (or **Run** in the UI, `POST /api/run`) calls `run_all`. Each search is priced and inserted into `quotes` (failures are stored with an `error` and the run continues). Google searches wait `schedule.request_delay_seconds` between requests, and a failed one is retried once after 30 s. Then plans are rebuilt from the latest successful quote per search, each destination's best total per plan type is appended to `plan_history`, and alerts fire for new lows. The dashboard reads `quotes`/`plan_history` and recomputes plans on request.
 
