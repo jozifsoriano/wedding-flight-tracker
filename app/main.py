@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -9,7 +10,8 @@ from pathlib import Path
 
 import yaml
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -356,7 +358,11 @@ def _write_gui_destinations(items: list[dict], migrated: bool | None = None) -> 
     path = gui_destinations_path(CONFIG_PATH)
     if migrated is None:
         migrated = _read_store()[1]
-    document = {"migrated": True, "destinations": items} if migrated else items
+    _atomic_write_yaml(path, {"migrated": True, "destinations": items} if migrated else items)
+    cfg = load_config(CONFIG_PATH)
+
+
+def _atomic_write_yaml(path: Path, document) -> None:
     temp_path = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -367,11 +373,10 @@ def _write_gui_destinations(items: list[dict], migrated: bool | None = None) -> 
             yaml.safe_dump(document, temp, sort_keys=False, allow_unicode=True)
         os.replace(temp_path, path)
     except OSError as e:
-        raise HTTPException(500, f"Could not save destination: {e}") from e
+        raise HTTPException(500, f"Could not save: {e}") from e
     finally:
         if temp_path and temp_path.exists():
             temp_path.unlink()
-    cfg = load_config(CONFIG_PATH)
 
 
 def _read_store() -> tuple[list[dict], bool]:
@@ -451,6 +456,60 @@ def _remove_destination(destination_id: str) -> dict:
     return {"removed": destination_id, "searches": len(build_searches(cfg))}
 
 
+SEARCH_FIELDS = ("name", "shape", "cabin", "travelers", "legs", "note")
+NOT_MANAGED_SEARCH = "'{id}' is defined in config.yaml, which is read-only here. Only searches added through the app can be changed."
+
+
+def _write_gui_searches(items: list[dict]) -> None:
+    global cfg
+    _atomic_write_yaml(gui_searches_path(CONFIG_PATH), items)
+    cfg = load_config(CONFIG_PATH)
+
+
+def _validate_search(item: dict) -> TrackedSearch:
+    try:
+        search = TrackedSearch.model_validate(item)
+        others = [t for t in cfg.tracked_searches if t.id != search.id]
+        Config.model_validate({**cfg.model_dump(), "tracked_searches": [*others, search.model_dump()]})
+    except ValidationError as e:
+        raise HTTPException(422, "Search is invalid: " + "; ".join(
+            f"{'.'.join(map(str, err['loc']))}: {err['msg']}" for err in e.errors())) from e
+    return search
+
+
+def _add_search(args: dict) -> dict:
+    name = str(args.get("name", "")).strip()
+    search_id = _destination_id(name) if name else ""
+    if not search_id:
+        raise HTTPException(422, "A search needs a name")
+    if any(d.id == search_id for d in cfg.honeymoon) or any(t.id == search_id for t in cfg.tracked_searches):
+        raise HTTPException(409, f"{name} is already being tracked")
+    search = _validate_search({"id": search_id[:60], **{k: args[k] for k in SEARCH_FIELDS if k in args}, "name": name})
+    _write_gui_searches([*_gui_searches(), search.model_dump()])
+    return {"search": search.model_dump()}
+
+
+def _update_search(search_id: str, changes: dict) -> dict:
+    items = _gui_searches()
+    index = next((i for i, d in enumerate(items) if d["id"] == search_id), None)
+    if index is None:
+        if any(t.id == search_id for t in cfg.tracked_searches):
+            raise HTTPException(403, NOT_MANAGED_SEARCH.format(id=search_id))
+        raise HTTPException(404, f"No tracked search '{search_id}'")
+    search = _validate_search({**items[index], **{k: v for k, v in changes.items() if k in SEARCH_FIELDS}})
+    items[index] = search.model_dump()
+    _write_gui_searches(items)
+    return {"search": items[index]}
+
+
+def _remove_search(search_id: str) -> dict:
+    items = _gui_searches()
+    if not any(d["id"] == search_id for d in items):
+        raise HTTPException(404, NOT_MANAGED_SEARCH.format(id=search_id))
+    _write_gui_searches([d for d in items if d["id"] != search_id])
+    return {"removed": search_id}
+
+
 def _config_file_destinations() -> list[dict]:
     with open(CONFIG_PATH) as f:
         return list((yaml.safe_load(f) or {}).get("honeymoon") or [])
@@ -506,6 +565,7 @@ def reload_config():
 # --- Claude's tools (MCP) and the approval queue --------------------------------------------------
 
 MAX_APP_DESTINATIONS = 30   # each destination adds Google Flights searches; cap what a model can pile on
+MAX_APP_SEARCHES = 20       # each flight search costs one Claude question per SlickTrip refresh
 
 
 def _as_tool_error(fn):
@@ -522,12 +582,20 @@ def _as_tool_error(fn):
 
 def _tool_list_destinations(_args: dict):
     app_ids = {d["id"] for d in _gui_destinations()}
-    return [{"id": d.id, "name": d.name, "country": d.country, "airports": d.airports,
-             "leave_wedding_city": (d.start_dates or [None])[0], "leave_destination": (d.end_dates or [None])[0],
-             "extended_stay": d.extended_stay,
-             "editable": d.id in app_ids,
-             **({} if d.id in app_ids else {"note": "config.yaml destination; user must click 'Move built-in destinations into the app' to make it editable"})}
-            for d in cfg.honeymoon]
+    search_ids = {d["id"] for d in _gui_searches()}
+    destinations = [{"id": d.id, "name": d.name, "country": d.country, "airports": d.airports,
+                     "leave_wedding_city": (d.start_dates or [None])[0], "leave_destination": (d.end_dates or [None])[0],
+                     "extended_stay": d.extended_stay,
+                     "editable": d.id in app_ids,
+                     **({} if d.id in app_ids else {"note": "config.yaml destination; user must click 'Move built-in destinations into the app' to make it editable"})}
+                    for d in cfg.honeymoon]
+    searches = [{"id": t.id, "name": t.name, "shape": t.shape, "cabin": t.cabin, "travelers": t.travelers,
+                 "legs": [l.model_dump() for l in t.legs], "editable": t.id in search_ids,
+                 **{k: v for k, v in slicktrip.summarize(t, history_limit=0).items()
+                    if k in ("total", "previous", "change", "lowest")}}
+                for t in cfg.tracked_searches]
+    return {"destinations": destinations, "slicktrip_searches": searches,
+            "note": "slicktrip totals are USD for all travelers on that search, not per person"}
 
 
 def _tool_best_trips(_args: dict):
@@ -536,6 +604,12 @@ def _tool_best_trips(_args: dict):
 
 
 def _tool_add(args: dict):
+    if "legs" in args:   # a flight itinerary priced through SlickTrip, not a honeymoon city
+        if len(_gui_searches()) >= MAX_APP_SEARCHES:
+            raise mcp.ToolError(f"Limit of {MAX_APP_SEARCHES} app-added flight searches reached; ask the user to remove some.")
+        result = _add_search(args)
+        actions.record("add_search", f"Added flight search {result['search']['name']}", result["search"])
+        return result
     if len(_gui_destinations()) >= MAX_APP_DESTINATIONS:
         raise mcp.ToolError(f"Limit of {MAX_APP_DESTINATIONS} app-added destinations reached; ask the user to remove some.")
     result = _add_destination(AddDestinationRequest(**args))
@@ -545,24 +619,37 @@ def _tool_add(args: dict):
 
 def _tool_update(args: dict):
     destination_id = str(args.get("id", ""))
-    result = _update_destination(destination_id, {k: v for k, v in args.items() if k != "id"})
+    changes = {k: v for k, v in args.items() if k != "id"}
+    if any(t.id == destination_id for t in cfg.tracked_searches):
+        result = _update_search(destination_id, changes)
+        actions.record("update_search", f"Updated flight search {result['search']['name']}", result["search"])
+        return result
+    result = _update_destination(destination_id, changes)
     actions.record("update_destination", f"Updated {result['destination']['name']}", result["destination"])
     return result
 
 
 def _tool_request_remove(args: dict):
-    destination_id = str(args.get("id", ""))
-    match = next((d for d in _gui_destinations() if d["id"] == destination_id), None)
-    if match is None:
-        raise mcp.ToolError(NOT_MANAGED.format(id=destination_id))
-    if not actions.pending_for("remove_destination", destination_id):
-        actions.record("remove_destination", f"Remove {match['name']}", {"id": destination_id, "name": match["name"]},
-                       status="pending")
+    """Only queues a request. Nothing here can remove anything; the user approves in the UI."""
+    item_id = str(args.get("id", ""))
+    search = next((d for d in _gui_searches() if d["id"] == item_id), None)
+    if search is not None:
+        kind, match = "remove_search", search
+    elif any(t.id == item_id for t in cfg.tracked_searches):
+        raise mcp.ToolError(NOT_MANAGED_SEARCH.format(id=item_id))
+    else:
+        kind, match = "remove_destination", next((d for d in _gui_destinations() if d["id"] == item_id), None)
+        if match is None:
+            raise mcp.ToolError(NOT_MANAGED.format(id=item_id))
+    if not actions.pending_for(kind, item_id):
+        actions.record(kind, f"Remove {match['name']}", {"id": item_id, "name": match["name"]}, status="pending")
     return (f"Removal of {match['name']} is waiting for the user to approve it in the Ask Claude tab. "
             "It has NOT been removed. Tell the user to approve it there.")
 
 
-def _tool_refresh(_args: dict):
+def _tool_refresh(args: dict):
+    if args.get("source") == "slicktrip":
+        return _start_slicktrip_refresh()   # queues behind this question on the bridge, then prices every search
     return _start_refresh()
 
 
@@ -574,33 +661,64 @@ _DEST_PROPS = {
     "end_date": {"type": "string", "description": "YYYY-MM-DD: date leaving the destination to fly home; after start_date"},
     "extended_stay": {"type": "boolean", "description": "true = no return hop to Da Nang"},
 }
+_SEARCH_PROPS = {
+    "shape": {"type": "string", "enum": ["round-trip", "one-way", "multi-city"],
+              "description": "Flight search only. round-trip = outbound leg + reverse return leg; multi-city = 2-5 legs"},
+    "legs": {"type": "array", "description": "Flight search only, in date order",
+             "items": {"type": "object", "required": ["origin", "destination", "date"], "properties": {
+                 "origin": {"type": "string", "description": "IATA airport or city code, e.g. DFW or TYOA"},
+                 "destination": {"type": "string"}, "date": {"type": "string", "description": "YYYY-MM-DD"}}}},
+    "cabin": {"type": "string", "enum": ["economy", "premium-economy", "business", "first"],
+              "description": "Flight search only; default business"},
+    "travelers": {"type": "integer", "description": "Flight search only; default 2. Prices are totals for all travelers"},
+}
 TOOLS = {t.name: t for t in [
     mcp.Tool("list_destinations", "List tracked honeymoon destinations and whether each can be edited.",
              {"type": "object", "properties": {}}, _as_tool_error(_tool_list_destinations), read_only=True),
     mcp.Tool("get_best_trips", "Cheapest complete trip per destination with current prices (totals for both travelers).",
              {"type": "object", "properties": {}}, _as_tool_error(_tool_best_trips), read_only=True),
-    mcp.Tool("add_destination", "Start tracking a new destination/flight plan.",
-             {"type": "object", "properties": _DEST_PROPS,
-              "required": ["name", "country", "airports", "start_date", "end_date"]}, _as_tool_error(_tool_add)),
-    mcp.Tool("update_destination", "Change an app-added destination (dates, airports, name, extended_stay). "
-             "Cannot edit config.yaml destinations.",
-             {"type": "object", "properties": {"id": {"type": "string"}, **_DEST_PROPS}, "required": ["id"]},
+    mcp.Tool("add_destination", "Start tracking a new honeymoon destination (name, country, airports, start_date, "
+             "end_date), OR a SlickTrip-priced flight search (name, shape, legs; optional cabin, travelers).",
+             {"type": "object", "properties": {**_DEST_PROPS, **_SEARCH_PROPS}, "required": ["name"]},
+             _as_tool_error(_tool_add)),
+    mcp.Tool("update_destination", "Change an app-added destination (dates, airports, name, extended_stay) or "
+             "flight search (name, shape, cabin, travelers, legs). Cannot edit config.yaml entries.",
+             {"type": "object", "properties": {"id": {"type": "string"}, **_DEST_PROPS, **_SEARCH_PROPS},
+              "required": ["id"]},
              _as_tool_error(_tool_update)),
-    mcp.Tool("request_remove_destination", "Ask the user to approve removing an app-added destination. "
-             "Nothing is removed until the user approves in the UI.",
+    mcp.Tool("request_remove_destination", "Ask the user to approve removing an app-added destination or flight "
+             "search. Nothing is removed until the user approves in the UI.",
              {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]},
              _as_tool_error(_tool_request_remove)),
-    mcp.Tool("refresh_prices", "Start a price refresh now (takes several minutes).",
-             {"type": "object", "properties": {}}, _as_tool_error(_tool_refresh)),
+    mcp.Tool("refresh_prices", "Start a price refresh now (takes several minutes). Default: the Google Flights "
+             "refresh; source=slicktrip refreshes the SlickTrip flight searches (starts after this question ends).",
+             {"type": "object", "properties": {"source": {"type": "string", "enum": ["google", "slicktrip"]}}},
+             _as_tool_error(_tool_refresh)),
 ]}
+
+MAX_MCP_BODY = 64_000   # bytes; tool calls are tiny, so anything bigger is refused before it is parsed
 
 
 @app.post("/mcp")
-def mcp_endpoint(message: dict = Body(...), authorization: str = Header(default="")):
+async def mcp_endpoint(request: Request, authorization: str = Header(default="")):
     """Claude's tool endpoint. Needs the per-question token the app hands the bridge; no UI route is reachable this way."""
     if not assistant.token_valid(authorization.removeprefix("Bearer ").strip()):
         raise HTTPException(401, "Invalid or expired token")
-    reply = mcp.handle(message, TOOLS)
+    declared = request.headers.get("content-length") or "0"
+    if not declared.isdigit():
+        raise HTTPException(400, "Bad Content-Length")
+    if int(declared) > MAX_MCP_BODY:
+        raise HTTPException(413, "Request too large")
+    raw = b""
+    async for chunk in request.stream():   # content-length can lie or be absent (chunked): cap what we read
+        raw += chunk
+        if len(raw) > MAX_MCP_BODY:
+            raise HTTPException(413, "Request too large")
+    try:
+        message = json.loads(raw or b"null")
+    except ValueError:
+        raise HTTPException(400, "Body must be JSON") from None
+    reply = await run_in_threadpool(mcp.handle, message, TOOLS)
     if reply is None:
         return Response(status_code=202)
     return reply
@@ -619,6 +737,8 @@ def approve_action(action_id: str):
     try:
         if action["kind"] == "remove_destination":
             _remove_destination(action["payload"]["id"])
+        elif action["kind"] == "remove_search":
+            _remove_search(action["payload"]["id"])
         else:
             raise HTTPException(400, f"Cannot run action kind {action['kind']}")
     except HTTPException as e:

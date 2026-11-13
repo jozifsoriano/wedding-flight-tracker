@@ -149,7 +149,7 @@ def summarize(s: TrackedSearch, history_limit: int = 60) -> dict:
            "error": last and last.get("error"), "flags": (last or {}).get("flags", []),
            "total": None, "previous": None, "change": None, "change_pct": None, "trend": None,
            "lowest": None, "lowest_at": None, "is_lowest": False, "url": None, "priced_at": None,
-           "history": [{"at": d["fetched_at"].isoformat(), "total": d["total_usd"]} for d in ok[-history_limit:]]}
+           "history": [{"at": d["fetched_at"].isoformat(), "total": d["total_usd"]} for d in (ok[-history_limit:] if history_limit else [])]}
     if not ok:
         return out
     cur, prev = ok[-1], ok[-2] if len(ok) > 1 else None
