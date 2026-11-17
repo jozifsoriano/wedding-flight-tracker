@@ -105,6 +105,11 @@ footer { padding-bottom: 32px; }
 .level.typical { color: var(--warn); }
 .level.high { color: var(--bad); }
 
+.drop { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.drop.down { color: var(--good); }
+.drop.up { color: var(--bad); }
+.drop.flat { color: var(--muted); }
+
 .legs { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--border); }
 .legs li { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
 .legs li:last-child { border-bottom: 0; }

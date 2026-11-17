@@ -5,7 +5,7 @@ The tracker app calls this small service; it runs `claude -p` headless with two 
 | MCP server | Where | Auth | Used for |
 |---|---|---|---|
 | `slicktrip` | `https://slicktrip.com/mcp` | OAuth, done once on this VM (user scope) | flight/trip research |
-| `wedding` | the tracker app, `APP_URL/mcp` | per-question token the app mints and revokes | list/add/update destinations, refresh prices, request removals |
+| `wedding` | the tracker app, `APP_BASE_URL/mcp` | per-question token the app mints and revokes | list/add/update destinations, refresh prices, request removals |
 
 Claude gets **no built-in tools** (no shell, no files). Removals are never executed by Claude: it queues them and you
 click Approve in the app's **Ask Claude** tab.
@@ -33,8 +33,9 @@ sudo cp claude-bridge.service /etc/systemd/system/ && sudo systemctl enable --no
 curl localhost:8791/health
 ```
 
-Then in the tracker's `.env`: `CLAUDE_BRIDGE_URL=http://<claude-vm-ip>:8791`, `CLAUDE_BRIDGE_TOKEN=<same token>`,
-`APP_URL=http://<app-ip>:8000` (omit `APP_URL` for a chat-only, read-only setup), then recreate the container.
+Then in the tracker's `.env`: `BRIDGE_URL=http://<claude-vm-ip>:8791`, `BRIDGE_TOKEN=<same token>`,
+`APP_BASE_URL=http://<app-ip>:8000` (omit `APP_BASE_URL` for a chat-only, read-only setup), then recreate the container.
+(The app's older names `CLAUDE_BRIDGE_URL`, `CLAUDE_BRIDGE_TOKEN` and `APP_URL` still work.)
 
 ## Environment
 
